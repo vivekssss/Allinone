@@ -1,4 +1,4 @@
-export const Colors = {
+export const DarkColors = {
   background: '#0A0E27',
   surface: '#141832',
   card: '#1B1F3B',
@@ -34,6 +34,51 @@ export const Colors = {
   glass: 'rgba(27, 31, 59, 0.6)',
   glassBorder: 'rgba(108, 92, 231, 0.15)',
 };
+
+export const LightColors = {
+  background: '#F5F7FA',
+  surface: '#FFFFFF',
+  card: '#FFFFFF',
+  cardBorder: 'rgba(108, 92, 231, 0.12)',
+
+  primary: '#6C5CE7',
+  primaryLight: '#A29BFE',
+  secondary: '#0099CC',
+  secondaryLight: '#33BBDD',
+  accent: '#FF5252',
+  accentLight: '#FF8A80',
+
+  success: '#00C853',
+  successDark: '#00A843',
+  warning: '#FFB300',
+  warningDark: '#FF8F00',
+  error: '#FF5252',
+  info: '#2979FF',
+
+  textPrimary: '#1A1D2E',
+  textSecondary: '#6B7082',
+  textMuted: '#9DA3B4',
+  textAccent: '#6C5CE7',
+
+  gradient1Start: '#6C5CE7',
+  gradient1End: '#00D2FF',
+  gradient2Start: '#FF6B6B',
+  gradient2End: '#FFD93D',
+  gradient3Start: '#00E676',
+  gradient3End: '#00D2FF',
+
+  overlay: 'rgba(0, 0, 0, 0.5)',
+  glass: 'rgba(255, 255, 255, 0.7)',
+  glassBorder: 'rgba(108, 92, 231, 0.1)',
+};
+
+// Default export for backward compatibility
+export const Colors = DarkColors;
+
+export type ThemeColors = typeof DarkColors;
+
+export const getThemeColors = (mode: 'dark' | 'light'): ThemeColors =>
+  mode === 'dark' ? DarkColors : LightColors;
 
 export const Spacing = {
   xs: 4,

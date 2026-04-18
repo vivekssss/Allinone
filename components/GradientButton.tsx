@@ -6,7 +6,7 @@ import { Colors, BorderRadius, Spacing, FontSize, Shadows } from '@/constants/th
 interface GradientButtonProps {
   title: string;
   onPress: () => void;
-  colors?: string[];
+  colors?: readonly [string, string, ...string[]];
   style?: ViewStyle;
   textStyle?: any;
   disabled?: boolean;

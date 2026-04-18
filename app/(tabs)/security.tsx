@@ -1,602 +1,543 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  StyleSheet,
-  TouchableOpacity,
-  Animated,
-  Platform,
-  Dimensions,
-  Modal,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Animated,
+  Dimensions, FlatList, Modal, ActivityIndicator, Platform, RefreshControl,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useTheme } from '@/constants/ThemeContext';
+import { useTranslation } from 'react-i18next';
+import { appsAPI, optimizationAPI } from '@/services/api';
 import GlassCard from '@/components/GlassCard';
-import { Colors, Spacing, FontSize, BorderRadius, Shadows } from '@/constants/theme';
+import { Spacing, FontSize, BorderRadius, Shadows } from '@/constants/theme';
+import '@/i18n';
 
 const { width } = Dimensions.get('window');
 
-interface RunningApp {
-  id: string;
-  name: string;
+interface AppData {
+  _id: string;
   packageName: string;
+  appName: string;
   category: string;
   cpuUsage: number;
   memoryUsage: number;
   storageUsage: number;
   batteryDrain: number;
-  status: 'running' | 'background' | 'idle' | 'killed';
+  isRunning: boolean;
   dangerLevel: 'safe' | 'moderate' | 'dangerous';
-  description: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  timesKilled: number;
 }
 
-const SIMULATED_APPS: RunningApp[] = [
-  { id: '1', name: 'Social Media Tracker', packageName: 'com.tracker.social', category: 'bloatware', cpuUsage: 18.5, memoryUsage: 156, storageUsage: 245, batteryDrain: 12, status: 'background', dangerLevel: 'dangerous', description: 'Tracks browsing habits and sends data to 3rd parties', icon: 'warning' },
-  { id: '2', name: 'Ad Service Worker', packageName: 'com.ads.worker', category: 'service', cpuUsage: 14.2, memoryUsage: 98, storageUsage: 67, batteryDrain: 8, status: 'background', dangerLevel: 'dangerous', description: 'Displays background ads and collects usage data', icon: 'megaphone' },
-  { id: '3', name: 'Analytics Daemon', packageName: 'com.analytics.daemon', category: 'service', cpuUsage: 11.8, memoryUsage: 84, storageUsage: 34, batteryDrain: 6, status: 'background', dangerLevel: 'dangerous', description: 'Constantly sends telemetry data consuming battery', icon: 'analytics' },
-  { id: '4', name: 'Update Service', packageName: 'com.system.updater', category: 'service', cpuUsage: 8.3, memoryUsage: 72, storageUsage: 128, batteryDrain: 4, status: 'idle', dangerLevel: 'moderate', description: 'Checks for app updates periodically', icon: 'cloud-download' },
-  { id: '5', name: 'Cache Manager', packageName: 'com.cache.manager', category: 'background', cpuUsage: 6.1, memoryUsage: 134, storageUsage: 512, batteryDrain: 3, status: 'background', dangerLevel: 'moderate', description: 'Caches data for faster loading, uses significant storage', icon: 'server' },
-  { id: '6', name: 'Push Notifications', packageName: 'com.push.service', category: 'service', cpuUsage: 3.4, memoryUsage: 28, storageUsage: 12, batteryDrain: 2, status: 'running', dangerLevel: 'safe', description: 'Handles push notifications from installed apps', icon: 'notifications' },
-  { id: '7', name: 'Location Service', packageName: 'com.location.service', category: 'service', cpuUsage: 9.7, memoryUsage: 45, storageUsage: 8, batteryDrain: 15, status: 'running', dangerLevel: 'moderate', description: 'GPS tracking in background, major battery drain', icon: 'location' },
-  { id: '8', name: 'Bluetooth Manager', packageName: 'com.bluetooth.mgr', category: 'system', cpuUsage: 2.1, memoryUsage: 18, storageUsage: 4, batteryDrain: 5, status: 'running', dangerLevel: 'safe', description: 'Manages bluetooth connections', icon: 'bluetooth' },
-  { id: '9', name: 'Weather Widget', packageName: 'com.weather.widget', category: 'user', cpuUsage: 4.5, memoryUsage: 52, storageUsage: 89, batteryDrain: 3, status: 'background', dangerLevel: 'moderate', description: 'Refreshes weather data every 30 minutes', icon: 'cloudy' },
-  { id: '10', name: 'System UI', packageName: 'com.system.ui', category: 'system', cpuUsage: 5.2, memoryUsage: 96, storageUsage: 0, batteryDrain: 2, status: 'running', dangerLevel: 'safe', description: 'Core system interface - cannot be killed', icon: 'phone-portrait' },
-  { id: '11', name: 'Keyboard Service', packageName: 'com.keyboard.srv', category: 'system', cpuUsage: 1.8, memoryUsage: 32, storageUsage: 24, batteryDrain: 1, status: 'running', dangerLevel: 'safe', description: 'Input method service', icon: 'keypad' },
-  { id: '12', name: 'Data Sync Agent', packageName: 'com.sync.agent', category: 'bloatware', cpuUsage: 7.6, memoryUsage: 68, storageUsage: 156, batteryDrain: 9, status: 'background', dangerLevel: 'dangerous', description: 'Syncs data to unknown servers in background', icon: 'sync' },
+interface Stats {
+  totalApps: number;
+  runningApps: number;
+  totalCpuUsage: number;
+  totalMemoryUsage: number;
+  dangerousApps: number;
+  moderateApps: number;
+  safeApps: number;
+  securityScore: number;
+}
+
+// Fallback simulated apps when API unavailable
+const FALLBACK_APPS: AppData[] = [
+  { _id: '1', packageName: 'com.adware.tracker', appName: 'Ad Tracker Pro', category: 'bloatware', cpuUsage: 18.5, memoryUsage: 245, storageUsage: 120, batteryDrain: 12, isRunning: true, dangerLevel: 'dangerous', timesKilled: 0 },
+  { _id: '2', packageName: 'com.crypto.miner', appName: 'Background Miner', category: 'service', cpuUsage: 42.3, memoryUsage: 512, storageUsage: 45, batteryDrain: 35, isRunning: true, dangerLevel: 'dangerous', timesKilled: 0 },
+  { _id: '3', packageName: 'com.social.feed', appName: 'Social Feed Sync', category: 'user', cpuUsage: 8.2, memoryUsage: 180, storageUsage: 320, batteryDrain: 8, isRunning: true, dangerLevel: 'moderate', timesKilled: 0 },
+  { _id: '4', packageName: 'com.weather.widget', appName: 'Weather Widget', category: 'user', cpuUsage: 3.1, memoryUsage: 95, storageUsage: 28, batteryDrain: 3, isRunning: true, dangerLevel: 'safe', timesKilled: 0 },
+  { _id: '5', packageName: 'com.location.spy', appName: 'Location Logger', category: 'service', cpuUsage: 15.7, memoryUsage: 180, storageUsage: 65, batteryDrain: 18, isRunning: true, dangerLevel: 'dangerous', timesKilled: 0 },
+  { _id: '6', packageName: 'com.data.collector', appName: 'Data Collector BG', category: 'bloatware', cpuUsage: 22.1, memoryUsage: 310, storageUsage: 90, batteryDrain: 14, isRunning: true, dangerLevel: 'dangerous', timesKilled: 0 },
+  { _id: '7', packageName: 'com.news.refresh', appName: 'News Auto-Refresh', category: 'user', cpuUsage: 5.5, memoryUsage: 120, storageUsage: 150, batteryDrain: 5, isRunning: true, dangerLevel: 'moderate', timesKilled: 0 },
+  { _id: '8', packageName: 'com.system.updater', appName: 'System Updater', category: 'system', cpuUsage: 1.2, memoryUsage: 60, storageUsage: 200, batteryDrain: 1, isRunning: true, dangerLevel: 'safe', timesKilled: 0 },
 ];
 
 export default function SecurityScreen() {
-  const [apps, setApps] = useState<RunningApp[]>(SIMULATED_APPS);
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+
+  const [apps, setApps] = useState<AppData[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanComplete, setScanComplete] = useState(false);
-  const [scanPhase, setScanPhase] = useState('');
-  const [progress, setProgress] = useState(0);
-  const [killedApps, setKilledApps] = useState<RunningApp[]>([]);
-  const [showResults, setShowResults] = useState(false);
-  const [selectedApp, setSelectedApp] = useState<RunningApp | null>(null);
-  const [sortBy, setSortBy] = useState<'cpu' | 'memory' | 'danger'>('danger');
-  const [totalMemoryFreed, setTotalMemoryFreed] = useState(0);
-  const [totalCpuFreed, setTotalCpuFreed] = useState(0);
+  const [killFeed, setKillFeed] = useState<string[]>([]);
+  const [killedApps, setKilledApps] = useState<any[]>([]);
+  const [totalFreed, setTotalFreed] = useState({ memory: 0, cpu: 0, battery: 0, appsCount: 0 });
+  const [activeTab, setActiveTab] = useState<'threats' | 'all' | 'history'>('threats');
+  const [scanHistory, setScanHistory] = useState<any[]>([]);
+  const [sortBy, setSortBy] = useState<'threat' | 'cpu' | 'ram'>('threat');
 
+  const scanAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const rocketY = useRef(new Animated.Value(0)).current;
-  const successScale = useRef(new Animated.Value(0)).current;
-  const checkmarkRotate = useRef(new Animated.Value(0)).current;
-  const glowAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.06, duration: 1000, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-
-    const glow = Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
-        Animated.timing(glowAnim, { toValue: 0, duration: 1500, useNativeDriver: true }),
-      ])
-    );
-    glow.start();
-
-    return () => { pulse.stop(); glow.stop(); };
+    fetchApps();
+    fetchHistory();
+    startPulse();
   }, []);
 
-  const getSortedApps = () => {
-    const sorted = [...apps];
-    switch (sortBy) {
-      case 'cpu': return sorted.sort((a, b) => b.cpuUsage - a.cpuUsage);
-      case 'memory': return sorted.sort((a, b) => b.memoryUsage - a.memoryUsage);
-      case 'danger': {
-        const order = { dangerous: 3, moderate: 2, safe: 1 };
-        return sorted.sort((a, b) => order[b.dangerLevel] - order[a.dangerLevel]);
+  const startPulse = () => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.1, duration: 1200, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
+      ])
+    ).start();
+  };
+
+  const fetchApps = async () => {
+    try {
+      const res = await appsAPI.getAll();
+      if (res.data.apps?.length > 0) {
+        setApps(res.data.apps);
+        setStats(res.data.stats);
+      } else {
+        setApps(FALLBACK_APPS);
+        const running = FALLBACK_APPS.filter(a => a.isRunning);
+        setStats({
+          totalApps: FALLBACK_APPS.length,
+          runningApps: running.length,
+          totalCpuUsage: running.reduce((acc, a) => acc + a.cpuUsage, 0),
+          totalMemoryUsage: running.reduce((acc, a) => acc + a.memoryUsage, 0),
+          dangerousApps: FALLBACK_APPS.filter(a => a.dangerLevel === 'dangerous').length,
+          moderateApps: FALLBACK_APPS.filter(a => a.dangerLevel === 'moderate').length,
+          safeApps: FALLBACK_APPS.filter(a => a.dangerLevel === 'safe').length,
+          securityScore: 35,
+        });
       }
-      default: return sorted;
+    } catch {
+      setApps(FALLBACK_APPS);
+      const running = FALLBACK_APPS.filter(a => a.isRunning);
+      setStats({
+        totalApps: FALLBACK_APPS.length,
+        runningApps: running.length,
+        totalCpuUsage: running.reduce((acc, a) => acc + a.cpuUsage, 0),
+        totalMemoryUsage: running.reduce((acc, a) => acc + a.memoryUsage, 0),
+        dangerousApps: FALLBACK_APPS.filter(a => a.dangerLevel === 'dangerous').length,
+        moderateApps: FALLBACK_APPS.filter(a => a.dangerLevel === 'moderate').length,
+        safeApps: FALLBACK_APPS.filter(a => a.dangerLevel === 'safe').length,
+        securityScore: 35,
+      });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const startOptimization = async () => {
+  const fetchHistory = async () => {
+    try {
+      const res = await optimizationAPI.getHistory(10, 'security_scan');
+      setScanHistory(res.data.actions || []);
+    } catch { }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchApps();
+  };
+
+  const runSecurityScan = async () => {
     if (isScanning) return;
     setIsScanning(true);
     setScanComplete(false);
-    setShowResults(false);
+    setKillFeed([]);
     setKilledApps([]);
-    setTotalMemoryFreed(0);
-    setTotalCpuFreed(0);
 
-    try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); } catch {}
+    Animated.timing(scanAnim, { toValue: 1, duration: 600, useNativeDriver: false }).start();
 
-    // Rocket launch animation
-    Animated.timing(rocketY, { toValue: -30, duration: 600, useNativeDriver: true }).start();
+    const threats = apps.filter(a => a.dangerLevel === 'dangerous' || a.dangerLevel === 'moderate');
 
-    const phases = [
-      'Scanning running processes...',
-      'Analyzing CPU usage...',
-      'Detecting harmful apps...',
-      'Checking memory allocation...',
-      'Identifying bloatware...',
-      'Killing dangerous processes...',
-      'Clearing app caches...',
-      'Freeing memory...',
-      'Optimizing CPU threads...',
-      'Finalizing cleanup...',
+    // Simulated live feed
+    const feedMessages = [
+      '🔍 Scanning system processes...',
+      '🧠 Analyzing CPU thread allocation...',
+      '📡 Checking network activity...',
+      ...threats.map(a => `⚠️ Threat detected: ${a.appName} (${a.cpuUsage}% CPU)`),
+      '🔒 Initiating threat elimination...',
     ];
 
-    const killable = apps.filter(a => a.dangerLevel !== 'safe' && a.status !== 'killed');
-    let memFreed = 0;
-    let cpuFreed = 0;
-    const killed: RunningApp[] = [];
-
-    for (let i = 0; i < phases.length; i++) {
-      setScanPhase(phases[i]);
-      const p = Math.round(((i + 1) / phases.length) * 100);
-      setProgress(p);
-      await new Promise(r => setTimeout(r, 400 + Math.random() * 300));
-
-      if (i >= 4 && killed.length < killable.length) {
-        const appToKill = killable[killed.length];
-        killed.push(appToKill);
-        memFreed += appToKill.memoryUsage;
-        cpuFreed += appToKill.cpuUsage;
-        setKilledApps([...killed]);
-        setTotalMemoryFreed(memFreed);
-        setTotalCpuFreed(Math.round(cpuFreed * 10) / 10);
-        try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-      }
+    for (const msg of feedMessages) {
+      await new Promise(r => setTimeout(r, 400));
+      setKillFeed(prev => [...prev, msg]);
     }
 
-    // Update app states
-    setApps(prev => prev.map(app => {
-      if (killed.find(k => k.id === app.id)) {
-        return { ...app, status: 'killed' as const };
+    // Kill each threat
+    const killed: any[] = [];
+    for (const app of threats) {
+      await new Promise(r => setTimeout(r, 500));
+      setKillFeed(prev => [...prev, `🗑️ Killing ${app.appName} — freed ${app.memoryUsage} MB`]);
+      killed.push({
+        appName: app.appName,
+        packageName: app.packageName,
+        memoryFreed: app.memoryUsage,
+        cpuFreed: app.cpuUsage,
+        batteryFreed: app.batteryDrain,
+        dangerLevel: app.dangerLevel,
+      });
+
+      try {
+        await appsAPI.killApp(app.packageName);
+      } catch { }
+    }
+
+    const freed = {
+      memory: killed.reduce((acc, a) => acc + a.memoryFreed, 0),
+      cpu: Math.round(killed.reduce((acc, a) => acc + a.cpuFreed, 0) * 10) / 10,
+      battery: killed.reduce((acc, a) => acc + a.batteryFreed, 0),
+      appsCount: killed.length,
+    };
+
+    setKilledApps(killed);
+    setTotalFreed(freed);
+    setKillFeed(prev => [...prev, `✅ ${killed.length} threats eliminated! Freed ${freed.memory} MB RAM`]);
+
+    // Log optimization
+    try {
+      await optimizationAPI.run({
+        actionType: 'security_scan',
+        status: 'completed',
+        appsKilled: killed.map(a => a.packageName),
+        totalMemoryFreed: freed.memory,
+        totalCpuFreed: freed.cpu,
+      });
+    } catch { }
+
+    // Update local state
+    setApps(prev => prev.map(a => {
+      if (threats.find(t => t._id === a._id)) {
+        return { ...a, isRunning: false };
       }
-      return app;
+      return a;
     }));
 
-    setIsScanning(false);
     setScanComplete(true);
-    setShowResults(true);
-
-    try { await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-
-    // Success animation
-    Animated.parallel([
-      Animated.spring(successScale, { toValue: 1, friction: 4, tension: 80, useNativeDriver: true }),
-      Animated.timing(checkmarkRotate, { toValue: 1, duration: 800, useNativeDriver: true }),
-      Animated.timing(rocketY, { toValue: 0, duration: 500, useNativeDriver: true }),
-    ]).start();
+    setIsScanning(false);
+    fetchHistory();
   };
 
-  const resetScan = () => {
-    setScanComplete(false);
-    setShowResults(false);
-    setProgress(0);
-    setKilledApps([]);
-    setApps(SIMULATED_APPS);
-    successScale.setValue(0);
-    checkmarkRotate.setValue(0);
+  const killSingleApp = async (app: AppData) => {
+    try {
+      await appsAPI.killApp(app.packageName);
+    } catch { }
+    setApps(prev => prev.map(a => a._id === app._id ? { ...a, isRunning: false } : a));
   };
 
   const getDangerColor = (level: string) => {
-    switch (level) {
-      case 'dangerous': return Colors.accent;
-      case 'moderate': return Colors.warning;
-      default: return Colors.success;
-    }
+    if (level === 'dangerous') return colors.accent;
+    if (level === 'moderate') return colors.warning;
+    return colors.success;
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'running': return Colors.success;
-      case 'background': return Colors.warning;
-      case 'idle': return Colors.textMuted;
-      case 'killed': return Colors.accent;
-      default: return Colors.textMuted;
-    }
+  const getDangerIcon = (level: string): any => {
+    if (level === 'dangerous') return 'skull';
+    if (level === 'moderate') return 'warning';
+    return 'shield-checkmark';
   };
 
-  const totalCpu = apps.filter(a => a.status !== 'killed').reduce((acc, a) => acc + a.cpuUsage, 0);
-  const totalMem = apps.filter(a => a.status !== 'killed').reduce((acc, a) => acc + a.memoryUsage, 0);
-  const dangerousCount = apps.filter(a => a.dangerLevel === 'dangerous' && a.status !== 'killed').length;
-
-  const checkmarkSpin = checkmarkRotate.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
+  const sortedApps = [...apps].filter(a => {
+    if (activeTab === 'threats') return a.dangerLevel !== 'safe' && a.isRunning;
+    return a.isRunning;
+  }).sort((a, b) => {
+    if (sortBy === 'cpu') return b.cpuUsage - a.cpuUsage;
+    if (sortBy === 'ram') return b.memoryUsage - a.memoryUsage;
+    const order = { dangerous: 3, moderate: 2, safe: 1 };
+    return (order[b.dangerLevel] || 0) - (order[a.dangerLevel] || 0);
   });
 
+  const securityScore = stats?.securityScore ?? 100;
+  const scoreColor = securityScore >= 70 ? colors.success : securityScore >= 40 ? colors.warning : colors.accent;
+
+  const dynamicStyles = createStyles(colors);
+
+  if (loading) {
+    return (
+      <View style={[dynamicStyles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[dynamicStyles.subtitle, { marginTop: 12 }]}>{t('common.loading')}</Text>
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <LinearGradient colors={[Colors.accent + '25', Colors.background]} style={styles.headerGradient}>
-          <Text style={styles.headerTitle}>🛡️ Security Center</Text>
-          <Text style={styles.headerSubtitle}>Detect & eliminate harmful background processes</Text>
+    <ScrollView
+      style={dynamicStyles.container}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+    >
+      {/* Header */}
+      <LinearGradient colors={[colors.primary + '30', 'transparent']} style={dynamicStyles.header}>
+        <Text style={dynamicStyles.title}>{t('security.title')}</Text>
+        <Text style={dynamicStyles.subtitle}>{t('security.subtitle')}</Text>
+      </LinearGradient>
 
-          {/* Overview Stats */}
-          <View style={styles.overviewRow}>
-            <View style={styles.overviewItem}>
-              <Text style={[styles.overviewValue, { color: Colors.accent }]}>{dangerousCount}</Text>
-              <Text style={styles.overviewLabel}>Threats</Text>
-            </View>
-            <View style={styles.overviewItem}>
-              <Text style={[styles.overviewValue, { color: Colors.warning }]}>{apps.filter(a => a.status !== 'killed').length}</Text>
-              <Text style={styles.overviewLabel}>Running</Text>
-            </View>
-            <View style={styles.overviewItem}>
-              <Text style={[styles.overviewValue, { color: Colors.secondary }]}>{Math.round(totalCpu)}%</Text>
-              <Text style={styles.overviewLabel}>CPU Used</Text>
-            </View>
-            <View style={styles.overviewItem}>
-              <Text style={[styles.overviewValue, { color: Colors.primary }]}>{totalMem} MB</Text>
-              <Text style={styles.overviewLabel}>RAM Used</Text>
-            </View>
-          </View>
-        </LinearGradient>
-
-        {/* Rocket Button */}
-        <View style={styles.rocketSection}>
-          <Animated.View style={[styles.rocketOuter, { transform: [{ scale: isScanning ? 1 : pulseAnim }, { translateY: rocketY }] }]}>
-            <TouchableOpacity onPress={isScanning ? undefined : scanComplete ? resetScan : startOptimization} activeOpacity={0.8}>
-              <LinearGradient
-                colors={scanComplete ? [Colors.success, '#00C853'] : isScanning ? [Colors.warning, '#FF9800'] : [Colors.accent, '#FF3D3D']}
-                style={styles.rocketButton}
-              >
-                {scanComplete ? (
-                  <Animated.View style={{ transform: [{ scale: successScale }, { rotate: checkmarkSpin }] }}>
-                    <Ionicons name="checkmark-circle" size={60} color="#fff" />
-                  </Animated.View>
-                ) : (
-                  <Ionicons name="rocket" size={56} color="#fff" />
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
+      {/* Security Score */}
+      <View style={dynamicStyles.section}>
+        <GlassCard style={dynamicStyles.scoreCard}>
+          <Animated.View style={[dynamicStyles.scoreCircle, { borderColor: scoreColor, transform: [{ scale: pulseAnim }] }]}>
+            <Text style={[dynamicStyles.scoreText, { color: scoreColor }]}>{securityScore}</Text>
+            <Text style={[dynamicStyles.scoreLabel, { color: colors.textSecondary }]}>/100</Text>
           </Animated.View>
-
-          <Text style={styles.rocketLabel}>
-            {isScanning ? scanPhase : scanComplete ? '✅ All threats eliminated!' : 'Tap to Close All Harmful Apps'}
-          </Text>
-
-          {(isScanning || scanComplete) && (
-            <View style={styles.progressContainer}>
-              <View style={styles.progressBg}>
-                <LinearGradient
-                  colors={scanComplete ? [Colors.success, Colors.secondary] : [Colors.accent, Colors.warning]}
-                  start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                  style={[styles.progressFill, { width: `${progress}%` }]}
-                />
+          <View style={dynamicStyles.scoreInfo}>
+            <Text style={[dynamicStyles.scoreTitle, { color: colors.textPrimary }]}>{t('security.securityScore')}</Text>
+            <View style={dynamicStyles.statsRow}>
+              <View style={dynamicStyles.statItem}>
+                <Ionicons name="skull" size={14} color={colors.accent} />
+                <Text style={[dynamicStyles.statValue, { color: colors.accent }]}>{stats?.dangerousApps || 0}</Text>
               </View>
-              <Text style={styles.progressText}>{progress}%</Text>
+              <View style={dynamicStyles.statItem}>
+                <Ionicons name="warning" size={14} color={colors.warning} />
+                <Text style={[dynamicStyles.statValue, { color: colors.warning }]}>{stats?.moderateApps || 0}</Text>
+              </View>
+              <View style={dynamicStyles.statItem}>
+                <Ionicons name="shield-checkmark" size={14} color={colors.success} />
+                <Text style={[dynamicStyles.statValue, { color: colors.success }]}>{stats?.safeApps || 0}</Text>
+              </View>
             </View>
-          )}
+          </View>
+        </GlassCard>
+      </View>
+
+      {/* Quick Stats */}
+      <View style={dynamicStyles.section}>
+        <View style={dynamicStyles.quickStats}>
+          {[
+            { label: t('security.threats'), value: `${(stats?.dangerousApps || 0) + (stats?.moderateApps || 0)}`, icon: 'warning', color: colors.accent },
+            { label: t('security.running'), value: `${stats?.runningApps || 0}`, icon: 'pulse', color: colors.info },
+            { label: t('security.cpuUsed'), value: `${stats?.totalCpuUsage?.toFixed(1) || 0}%`, icon: 'hardware-chip', color: colors.primary },
+            { label: t('security.ramUsed'), value: `${stats?.totalMemoryUsage || 0}MB`, icon: 'server', color: colors.secondary },
+          ].map((stat, i) => (
+            <GlassCard key={i} style={dynamicStyles.quickStatCard}>
+              <Ionicons name={stat.icon as any} size={20} color={stat.color} />
+              <Text style={[dynamicStyles.quickStatValue, { color: colors.textPrimary }]}>{stat.value}</Text>
+              <Text style={[dynamicStyles.quickStatLabel, { color: colors.textMuted }]}>{stat.label}</Text>
+            </GlassCard>
+          ))}
         </View>
+      </View>
 
-        {/* Live Kill Feed */}
-        {isScanning && killedApps.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>🔴 Live Kill Feed</Text>
-            {killedApps.map((app, i) => (
-              <Animated.View key={app.id} style={styles.killFeedItem}>
-                <Ionicons name="close-circle" size={18} color={Colors.accent} />
-                <Text style={styles.killFeedText}>
-                  <Text style={{ fontWeight: '700' }}>{app.name}</Text> killed — freed {app.memoryUsage} MB
-                </Text>
-              </Animated.View>
-            ))}
-          </View>
-        )}
+      {/* Scan Button */}
+      <View style={dynamicStyles.section}>
+        <TouchableOpacity onPress={runSecurityScan} disabled={isScanning} activeOpacity={0.8}>
+          <LinearGradient
+            colors={isScanning ? [colors.textMuted, colors.textMuted] : scanComplete ? [colors.success, colors.successDark] : [colors.accent, '#CC4444']}
+            style={dynamicStyles.scanButton}
+          >
+            {isScanning ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Ionicons name={scanComplete ? 'checkmark-circle' : 'shield'} size={22} color="#fff" />
+            )}
+            <Text style={dynamicStyles.scanButtonText}>
+              {isScanning ? '🔄 Scanning...' : scanComplete ? t('security.allThreatsEliminated') : t('security.tapToClose')}
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
 
-        {/* Optimization Results */}
-        {showResults && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>📊 Optimization Results</Text>
-            <View style={styles.resultsGrid}>
-              <GlassCard style={styles.resultCard}>
-                <LinearGradient colors={[Colors.accent + '30', 'transparent']} style={styles.resultGlow} />
-                <Ionicons name="close-circle" size={36} color={Colors.accent} />
-                <Text style={styles.resultValue}>{killedApps.length}</Text>
-                <Text style={styles.resultLabel}>Apps Killed</Text>
-              </GlassCard>
-              <GlassCard style={styles.resultCard}>
-                <LinearGradient colors={[Colors.success + '30', 'transparent']} style={styles.resultGlow} />
-                <Ionicons name="server" size={36} color={Colors.success} />
-                <Text style={styles.resultValue}>{totalMemoryFreed} MB</Text>
-                <Text style={styles.resultLabel}>Memory Freed</Text>
-              </GlassCard>
-              <GlassCard style={styles.resultCard}>
-                <LinearGradient colors={[Colors.secondary + '30', 'transparent']} style={styles.resultGlow} />
-                <Ionicons name="speedometer" size={36} color={Colors.secondary} />
-                <Text style={styles.resultValue}>{totalCpuFreed}%</Text>
-                <Text style={styles.resultLabel}>CPU Freed</Text>
-              </GlassCard>
-              <GlassCard style={styles.resultCard}>
-                <LinearGradient colors={[Colors.primary + '30', 'transparent']} style={styles.resultGlow} />
-                <Ionicons name="battery-charging" size={36} color={Colors.primary} />
-                <Text style={styles.resultValue}>{killedApps.reduce((a, b) => a + b.batteryDrain, 0)}%</Text>
-                <Text style={styles.resultLabel}>Battery Saved</Text>
-              </GlassCard>
-            </View>
-
-            {/* Killed Apps Detailed List */}
-            <Text style={[styles.sectionTitle, { marginTop: Spacing.lg }]}>🗑️ Apps Closed ({killedApps.length})</Text>
-            {killedApps.map((app, index) => (
-              <GlassCard key={app.id} style={styles.killedAppCard}>
-                <View style={styles.killedAppHeader}>
-                  <View style={[styles.appIcon, { backgroundColor: Colors.accent + '20' }]}>  
-                    <Ionicons name={app.icon} size={22} color={Colors.accent} />
-                  </View>
-                  <View style={styles.killedAppInfo}>
-                    <Text style={styles.killedAppName}>{app.name}</Text>
-                    <Text style={styles.killedAppPkg}>{app.packageName}</Text>
-                  </View>
-                  <View style={styles.killedBadge}>
-                    <Text style={styles.killedBadgeText}>KILLED</Text>
-                  </View>
+      {/* Live Kill Feed */}
+      {killFeed.length > 0 && (
+        <View style={dynamicStyles.section}>
+          <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('security.liveKillFeed')}</Text>
+          <GlassCard noPadding>
+            <ScrollView style={dynamicStyles.killFeed} nestedScrollEnabled>
+              {killFeed.map((msg, i) => (
+                <View key={i} style={dynamicStyles.killFeedItem}>
+                  <Text style={[dynamicStyles.killFeedText, { color: msg.includes('✅') ? colors.success : msg.includes('🗑️') ? colors.accent : colors.textSecondary }]}>
+                    {msg}
+                  </Text>
                 </View>
-                <Text style={styles.killedAppDesc}>{app.description}</Text>
-                <View style={styles.killedAppStats}>
-                  <View style={styles.killedStat}>
-                    <Ionicons name="hardware-chip" size={14} color={Colors.secondary} />
-                    <Text style={styles.killedStatText}>{app.cpuUsage}% CPU</Text>
-                  </View>
-                  <View style={styles.killedStat}>
-                    <Ionicons name="server" size={14} color={Colors.primary} />
-                    <Text style={styles.killedStatText}>{app.memoryUsage} MB RAM</Text>
-                  </View>
-                  <View style={styles.killedStat}>
-                    <Ionicons name="folder" size={14} color={Colors.warning} />
-                    <Text style={styles.killedStatText}>{app.storageUsage} MB</Text>
-                  </View>
-                  <View style={styles.killedStat}>
-                    <Ionicons name="battery-dead" size={14} color={Colors.accent} />
-                    <Text style={styles.killedStatText}>{app.batteryDrain}% drain</Text>
-                  </View>
-                </View>
-              </GlassCard>
-            ))}
-          </View>
-        )}
+              ))}
+            </ScrollView>
+          </GlassCard>
+        </View>
+      )}
 
-        {/* Sort Tabs */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📱 All Running Apps ({apps.filter(a => a.status !== 'killed').length})</Text>
-          <View style={styles.sortTabs}>
+      {/* Scan Results */}
+      {scanComplete && (
+        <View style={dynamicStyles.section}>
+          <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('security.optimizationResults')}</Text>
+          <View style={dynamicStyles.resultsGrid}>
             {[
-              { key: 'danger' as const, label: 'By Threat', icon: 'shield' as const },
-              { key: 'cpu' as const, label: 'By CPU', icon: 'hardware-chip' as const },
-              { key: 'memory' as const, label: 'By RAM', icon: 'server' as const },
-            ].map(tab => (
+              { label: t('security.appsKilled'), value: totalFreed.appsCount, icon: 'close-circle', color: colors.accent },
+              { label: t('security.memoryFreed'), value: `${totalFreed.memory}MB`, icon: 'server', color: colors.secondary },
+              { label: t('security.cpuFreed'), value: `${totalFreed.cpu}%`, icon: 'hardware-chip', color: colors.primary },
+              { label: t('security.batterySaved'), value: `${totalFreed.battery}%`, icon: 'battery-charging', color: colors.success },
+            ].map((r, i) => (
+              <GlassCard key={i} style={dynamicStyles.resultCard}>
+                <Ionicons name={r.icon as any} size={24} color={r.color} />
+                <Text style={[dynamicStyles.resultValue, { color: colors.textPrimary }]}>{r.value}</Text>
+                <Text style={[dynamicStyles.resultLabel, { color: colors.textMuted }]}>{r.label}</Text>
+              </GlassCard>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {/* Tabs */}
+      <View style={dynamicStyles.section}>
+        <View style={dynamicStyles.tabRow}>
+          {(['threats', 'all', 'history'] as const).map(tab => (
+            <TouchableOpacity
+              key={tab}
+              style={[dynamicStyles.tab, activeTab === tab && { backgroundColor: colors.primary + '30', borderColor: colors.primary }]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <Text style={[dynamicStyles.tabText, activeTab === tab && { color: colors.primary }]}>
+                {tab === 'threats' ? `⚠️ ${t('security.threats')}` : tab === 'all' ? `📱 ${t('security.running')}` : `📋 ${t('security.scanHistory')}`}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Sort Buttons (for threats/all tabs) */}
+      {activeTab !== 'history' && (
+        <View style={dynamicStyles.section}>
+          <View style={dynamicStyles.sortRow}>
+            {([
+              { key: 'threat', label: t('security.byThreat') },
+              { key: 'cpu', label: t('security.byCpu') },
+              { key: 'ram', label: t('security.byRam') },
+            ] as const).map(s => (
               <TouchableOpacity
-                key={tab.key}
-                style={[styles.sortTab, sortBy === tab.key && styles.sortTabActive]}
-                onPress={() => setSortBy(tab.key)}
+                key={s.key}
+                style={[dynamicStyles.sortBtn, sortBy === s.key && { backgroundColor: colors.primary + '20' }]}
+                onPress={() => setSortBy(s.key)}
               >
-                <Ionicons name={tab.icon} size={14} color={sortBy === tab.key ? Colors.primary : Colors.textMuted} />
-                <Text style={[styles.sortTabText, sortBy === tab.key && styles.sortTabTextActive]}>{tab.label}</Text>
+                <Text style={[dynamicStyles.sortText, sortBy === s.key && { color: colors.primary }]}>{s.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
         </View>
+      )}
 
-        {/* App List */}
-        <View style={[styles.section, { marginBottom: 100, marginTop: 0 }]}>
-          {getSortedApps().map((app) => (
-            <TouchableOpacity
-              key={app.id}
-              onPress={() => setSelectedApp(app)}
-              activeOpacity={0.7}
-            >
-              <GlassCard style={[styles.appCard, app.status === 'killed' && styles.appCardKilled]}>
-                <View style={styles.appHeader}>
-                  <View style={[styles.appIcon, { backgroundColor: getDangerColor(app.dangerLevel) + '20' }]}>  
-                    <Ionicons name={app.icon} size={20} color={getDangerColor(app.dangerLevel)} />
+      {/* Apps List */}
+      {activeTab !== 'history' ? (
+        <View style={dynamicStyles.section}>
+          {sortedApps.length === 0 ? (
+            <GlassCard style={{ alignItems: 'center', paddingVertical: 30 }}>
+              <Ionicons name="shield-checkmark" size={48} color={colors.success} />
+              <Text style={[dynamicStyles.emptyText, { color: colors.textSecondary }]}>
+                {t('security.allThreatsEliminated')}
+              </Text>
+            </GlassCard>
+          ) : (
+            sortedApps.map(app => (
+              <GlassCard key={app._id} style={dynamicStyles.appCard}>
+                <View style={dynamicStyles.appRow}>
+                  <View style={[dynamicStyles.appIcon, { backgroundColor: getDangerColor(app.dangerLevel) + '20' }]}>
+                    <Ionicons name={getDangerIcon(app.dangerLevel)} size={20} color={getDangerColor(app.dangerLevel)} />
                   </View>
-                  <View style={styles.appDetails}>
-                    <View style={styles.appNameRow}>
-                      <Text style={[styles.appName, app.status === 'killed' && styles.appNameKilled]}>{app.name}</Text>
-                      <View style={[styles.dangerBadge, { backgroundColor: getDangerColor(app.dangerLevel) + '20' }]}>
-                        <Text style={[styles.dangerBadgeText, { color: getDangerColor(app.dangerLevel) }]}>
-                          {app.dangerLevel.toUpperCase()}
-                        </Text>
-                      </View>
+                  <View style={dynamicStyles.appInfo}>
+                    <Text style={[dynamicStyles.appName, { color: colors.textPrimary }]}>{app.appName}</Text>
+                    <Text style={[dynamicStyles.appPackage, { color: colors.textMuted }]}>{app.packageName}</Text>
+                    <View style={dynamicStyles.appStats}>
+                      <Text style={[dynamicStyles.appStat, { color: colors.primary }]}>CPU: {app.cpuUsage}%</Text>
+                      <Text style={[dynamicStyles.appStat, { color: colors.secondary }]}>RAM: {app.memoryUsage}MB</Text>
+                      <Text style={[dynamicStyles.appStat, { color: colors.warning }]}>🔋{app.batteryDrain}%</Text>
                     </View>
-                    <Text style={styles.appCategory}>{app.category} • {app.status === 'killed' ? 'killed' : app.status}</Text>
                   </View>
-                </View>
-
-                {/* Resource Bars */}
-                <View style={styles.resourceBars}>
-                  <View style={styles.resourceRow}>
-                    <Text style={styles.resourceLabel}>CPU</Text>
-                    <View style={styles.resourceBarBg}>
-                      <View style={[styles.resourceBarFill, { width: `${Math.min(app.cpuUsage * 5, 100)}%`, backgroundColor: app.cpuUsage > 10 ? Colors.accent : Colors.secondary }]} />
-                    </View>
-                    <Text style={styles.resourceValue}>{app.cpuUsage}%</Text>
-                  </View>
-                  <View style={styles.resourceRow}>
-                    <Text style={styles.resourceLabel}>RAM</Text>
-                    <View style={styles.resourceBarBg}>
-                      <View style={[styles.resourceBarFill, { width: `${Math.min(app.memoryUsage / 2, 100)}%`, backgroundColor: app.memoryUsage > 100 ? Colors.warning : Colors.primary }]} />
-                    </View>
-                    <Text style={styles.resourceValue}>{app.memoryUsage} MB</Text>
-                  </View>
-                </View>
-
-                {/* Status indicator */}
-                <View style={styles.appFooter}>
-                  <View style={[styles.statusDot, { backgroundColor: getStatusColor(app.status) }]} />
-                  <Text style={styles.statusText}>{app.status === 'killed' ? 'Process terminated' : `Battery drain: ${app.batteryDrain}%`}</Text>
+                  {app.isRunning && (
+                    <TouchableOpacity
+                      style={[dynamicStyles.killBtn, { borderColor: getDangerColor(app.dangerLevel) }]}
+                      onPress={() => killSingleApp(app)}
+                    >
+                      <Ionicons name="close" size={16} color={getDangerColor(app.dangerLevel)} />
+                    </TouchableOpacity>
+                  )}
                 </View>
               </GlassCard>
-            </TouchableOpacity>
-          ))}
+            ))
+          )}
         </View>
-      </ScrollView>
-
-      {/* App Detail Modal */}
-      <Modal visible={!!selectedApp} transparent animationType="slide" onRequestClose={() => setSelectedApp(null)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            {selectedApp && (
-              <>
-                <View style={styles.modalHeader}>
-                  <View style={[styles.modalIcon, { backgroundColor: getDangerColor(selectedApp.dangerLevel) + '20' }]}>
-                    <Ionicons name={selectedApp.icon} size={32} color={getDangerColor(selectedApp.dangerLevel)} />
-                  </View>
-                  <TouchableOpacity onPress={() => setSelectedApp(null)}>
-                    <Ionicons name="close-circle" size={28} color={Colors.textMuted} />
-                  </TouchableOpacity>
+      ) : (
+        /* History Tab */
+        <View style={dynamicStyles.section}>
+          {scanHistory.length === 0 ? (
+            <GlassCard style={{ alignItems: 'center', paddingVertical: 30 }}>
+              <Ionicons name="time" size={48} color={colors.textMuted} />
+              <Text style={[dynamicStyles.emptyText, { color: colors.textMuted }]}>No scan history yet</Text>
+            </GlassCard>
+          ) : (
+            scanHistory.map((scan, i) => (
+              <GlassCard key={i} style={dynamicStyles.historyCard}>
+                <View style={dynamicStyles.historyHeader}>
+                  <Ionicons name="shield-checkmark" size={18} color={colors.success} />
+                  <Text style={[dynamicStyles.historyDate, { color: colors.textPrimary }]}>
+                    {new Date(scan.timestamp || scan.createdAt).toLocaleDateString()}
+                  </Text>
                 </View>
-
-                <Text style={styles.modalTitle}>{selectedApp.name}</Text>
-                <Text style={styles.modalPackage}>{selectedApp.packageName}</Text>
-                <Text style={styles.modalDesc}>{selectedApp.description}</Text>
-
-                <View style={styles.modalDivider} />
-
-                <Text style={styles.modalSectionTitle}>Resource Usage</Text>
-                <View style={styles.modalStats}>
-                  <View style={styles.modalStatItem}>
-                    <Ionicons name="hardware-chip" size={24} color={Colors.secondary} />
-                    <Text style={styles.modalStatValue}>{selectedApp.cpuUsage}%</Text>
-                    <Text style={styles.modalStatLabel}>CPU Usage</Text>
-                  </View>
-                  <View style={styles.modalStatItem}>
-                    <Ionicons name="server" size={24} color={Colors.primary} />
-                    <Text style={styles.modalStatValue}>{selectedApp.memoryUsage} MB</Text>
-                    <Text style={styles.modalStatLabel}>Memory</Text>
-                  </View>
-                  <View style={styles.modalStatItem}>
-                    <Ionicons name="folder" size={24} color={Colors.warning} />
-                    <Text style={styles.modalStatValue}>{selectedApp.storageUsage} MB</Text>
-                    <Text style={styles.modalStatLabel}>Storage</Text>
-                  </View>
-                  <View style={styles.modalStatItem}>
-                    <Ionicons name="battery-dead" size={24} color={Colors.accent} />
-                    <Text style={styles.modalStatValue}>{selectedApp.batteryDrain}%</Text>
-                    <Text style={styles.modalStatLabel}>Battery</Text>
-                  </View>
+                <View style={dynamicStyles.historyStats}>
+                  <Text style={[dynamicStyles.historyStat, { color: colors.textSecondary }]}>
+                    🗑️ {scan.appsKilled?.length || 0} killed
+                  </Text>
+                  <Text style={[dynamicStyles.historyStat, { color: colors.textSecondary }]}>
+                    💾 {scan.totalMemoryFreed || 0} MB freed
+                  </Text>
+                  <Text style={[dynamicStyles.historyStat, { color: colors.textSecondary }]}>
+                    ⚡ {scan.totalCpuFreed || 0}% CPU freed
+                  </Text>
                 </View>
-
-                <View style={styles.modalDivider} />
-
-                <View style={styles.modalInfoRow}>
-                  <Text style={styles.modalInfoLabel}>Category</Text>
-                  <Text style={styles.modalInfoValue}>{selectedApp.category}</Text>
-                </View>
-                <View style={styles.modalInfoRow}>
-                  <Text style={styles.modalInfoLabel}>Status</Text>
-                  <Text style={[styles.modalInfoValue, { color: getStatusColor(selectedApp.status) }]}>{selectedApp.status}</Text>
-                </View>
-                <View style={styles.modalInfoRow}>
-                  <Text style={styles.modalInfoLabel}>Threat Level</Text>
-                  <Text style={[styles.modalInfoValue, { color: getDangerColor(selectedApp.dangerLevel) }]}>{selectedApp.dangerLevel}</Text>
-                </View>
-
-                {selectedApp.dangerLevel !== 'safe' && selectedApp.status !== 'killed' && (
-                  <TouchableOpacity style={styles.killBtn} onPress={() => {
-                    setApps(prev => prev.map(a => a.id === selectedApp.id ? { ...a, status: 'killed' as const } : a));
-                    setSelectedApp(null);
-                  }}>
-                    <LinearGradient colors={[Colors.accent, '#FF3D3D']} style={styles.killBtnGradient}>
-                      <Ionicons name="skull" size={20} color="#fff" />
-                      <Text style={styles.killBtnText}>Kill This Process</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-          </View>
+              </GlassCard>
+            ))
+          )}
         </View>
-      </Modal>
-    </View>
+      )}
+
+      <View style={{ height: 100 }} />
+    </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  headerGradient: { paddingTop: Platform.OS === 'ios' ? 60 : 48, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md },
-  headerTitle: { color: Colors.textPrimary, fontSize: FontSize.title, fontWeight: '800' },
-  headerSubtitle: { color: Colors.textSecondary, fontSize: FontSize.md, marginTop: 4 },
-  overviewRow: { flexDirection: 'row', marginTop: Spacing.lg, gap: Spacing.sm },
-  overviewItem: { flex: 1, backgroundColor: Colors.glass, borderRadius: BorderRadius.md, padding: Spacing.sm, alignItems: 'center', borderWidth: 1, borderColor: Colors.glassBorder },
-  overviewValue: { fontSize: FontSize.xl, fontWeight: '800' },
-  overviewLabel: { fontSize: FontSize.xs, color: Colors.textMuted, fontWeight: '600', marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.5 },
-  rocketSection: { alignItems: 'center', paddingVertical: Spacing.lg },
-  rocketOuter: { ...Shadows.glow, shadowColor: Colors.accent },
-  rocketButton: { width: 130, height: 130, borderRadius: 65, alignItems: 'center', justifyContent: 'center', ...Shadows.glow, shadowColor: Colors.accent },
-  rocketLabel: { color: Colors.textSecondary, fontSize: FontSize.md, fontWeight: '600', marginTop: Spacing.md, textAlign: 'center', paddingHorizontal: Spacing.xl },
-  progressContainer: { flexDirection: 'row', alignItems: 'center', marginTop: Spacing.md, paddingHorizontal: Spacing.xl, width: '100%', gap: Spacing.md },
-  progressBg: { flex: 1, height: 8, backgroundColor: Colors.card, borderRadius: 4, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 4 },
-  progressText: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: '700', width: 45, textAlign: 'right' },
-  section: { paddingHorizontal: Spacing.lg, marginTop: Spacing.lg },
-  sectionTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.md },
-  killFeedItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: 6, paddingHorizontal: Spacing.md, backgroundColor: Colors.accent + '10', borderRadius: BorderRadius.sm, marginBottom: 4, borderLeftWidth: 3, borderLeftColor: Colors.accent },
-  killFeedText: { color: Colors.textPrimary, fontSize: FontSize.sm, flex: 1 },
+const createStyles = (colors: any) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
+  header: { paddingHorizontal: Spacing.lg, paddingTop: Platform.OS === 'ios' ? 60 : 50, paddingBottom: Spacing.lg },
+  title: { color: colors.textPrimary, fontSize: FontSize.title, fontWeight: '800' },
+  subtitle: { color: colors.textSecondary, fontSize: FontSize.md, marginTop: 4 },
+  section: { paddingHorizontal: Spacing.lg, marginTop: Spacing.md },
+  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.sm },
+  scoreCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.lg },
+  scoreCircle: { width: 80, height: 80, borderRadius: 40, borderWidth: 3, alignItems: 'center', justifyContent: 'center' },
+  scoreText: { fontSize: FontSize.title, fontWeight: '900' },
+  scoreLabel: { fontSize: FontSize.xs },
+  scoreInfo: { flex: 1 },
+  scoreTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: 6 },
+  statsRow: { flexDirection: 'row', gap: Spacing.lg },
+  statItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  statValue: { fontSize: FontSize.md, fontWeight: '700' },
+  quickStats: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  quickStatCard: { width: (width - Spacing.lg * 2 - Spacing.sm) / 2 - 1, alignItems: 'center', paddingVertical: Spacing.md },
+  quickStatValue: { fontSize: FontSize.xl, fontWeight: '800', marginTop: 4 },
+  quickStatLabel: { fontSize: FontSize.xs, marginTop: 2 },
+  scanButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: Spacing.md + 4, borderRadius: BorderRadius.lg },
+  scanButtonText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700' },
+  killFeed: { maxHeight: 200, padding: Spacing.md },
+  killFeedItem: { paddingVertical: 4 },
+  killFeedText: { fontSize: FontSize.sm, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
   resultsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  resultCard: { width: (width - Spacing.lg * 2 - Spacing.sm) / 2 - 0.5, alignItems: 'center', gap: Spacing.xs, overflow: 'hidden' },
-  resultGlow: { position: 'absolute', top: 0, left: 0, right: 0, height: 60, borderRadius: BorderRadius.lg },
-  resultValue: { color: Colors.textPrimary, fontSize: FontSize.xxl, fontWeight: '900' },
-  resultLabel: { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  killedAppCard: { marginBottom: Spacing.sm },
-  killedAppHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginBottom: Spacing.sm },
-  killedAppInfo: { flex: 1 },
-  killedAppName: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: '700' },
-  killedAppPkg: { color: Colors.textMuted, fontSize: FontSize.xs, marginTop: 1 },
-  killedBadge: { backgroundColor: Colors.accent + '20', paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: BorderRadius.full, borderWidth: 1, borderColor: Colors.accent + '40' },
-  killedBadgeText: { color: Colors.accent, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
-  killedAppDesc: { color: Colors.textSecondary, fontSize: FontSize.sm, marginBottom: Spacing.sm, lineHeight: 18 },
-  killedAppStats: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md },
-  killedStat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  killedStatText: { color: Colors.textMuted, fontSize: FontSize.xs, fontWeight: '600' },
-  sortTabs: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
-  sortTab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: Spacing.sm, borderRadius: BorderRadius.xl, backgroundColor: Colors.glass, borderWidth: 1, borderColor: Colors.glassBorder },
-  sortTabActive: { backgroundColor: Colors.primary + '20', borderColor: Colors.primary + '40' },
-  sortTabText: { color: Colors.textMuted, fontSize: FontSize.sm, fontWeight: '600' },
-  sortTabTextActive: { color: Colors.primary },
+  resultCard: { width: (width - Spacing.lg * 2 - Spacing.sm) / 2 - 1, alignItems: 'center', paddingVertical: Spacing.md },
+  resultValue: { fontSize: FontSize.xxl, fontWeight: '800', marginTop: 4 },
+  resultLabel: { fontSize: FontSize.xs, marginTop: 2 },
+  tabRow: { flexDirection: 'row', gap: Spacing.sm },
+  tab: { flex: 1, paddingVertical: Spacing.sm, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.glassBorder, alignItems: 'center' },
+  tabText: { color: colors.textMuted, fontSize: FontSize.sm, fontWeight: '600' },
+  sortRow: { flexDirection: 'row', gap: Spacing.sm },
+  sortBtn: { paddingHorizontal: Spacing.md, paddingVertical: 6, borderRadius: BorderRadius.full, borderWidth: 1, borderColor: colors.glassBorder },
+  sortText: { color: colors.textMuted, fontSize: FontSize.xs, fontWeight: '600' },
   appCard: { marginBottom: Spacing.sm },
-  appCardKilled: { opacity: 0.5 },
-  appHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginBottom: Spacing.sm },
-  appIcon: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  appDetails: { flex: 1 },
-  appNameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  appName: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: '700', flex: 1 },
-  appNameKilled: { textDecorationLine: 'line-through', color: Colors.textMuted },
-  appCategory: { color: Colors.textMuted, fontSize: FontSize.xs, marginTop: 2 },
-  dangerBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: BorderRadius.full },
-  dangerBadgeText: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
-  resourceBars: { gap: 6, marginBottom: Spacing.sm },
-  resourceRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  resourceLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700', width: 28, textTransform: 'uppercase' },
-  resourceBarBg: { flex: 1, height: 5, backgroundColor: Colors.card, borderRadius: 2.5, overflow: 'hidden' },
-  resourceBarFill: { height: '100%', borderRadius: 2.5 },
-  resourceValue: { color: Colors.textSecondary, fontSize: FontSize.xs, fontWeight: '600', width: 55, textAlign: 'right' },
-  appFooter: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  statusDot: { width: 6, height: 6, borderRadius: 3 },
-  statusText: { color: Colors.textMuted, fontSize: FontSize.xs },
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: Colors.surface, borderTopLeftRadius: BorderRadius.xl, borderTopRightRadius: BorderRadius.xl, padding: Spacing.xl, maxHeight: '80%' },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md },
-  modalIcon: { width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  modalTitle: { color: Colors.textPrimary, fontSize: FontSize.xxl, fontWeight: '800' },
-  modalPackage: { color: Colors.textMuted, fontSize: FontSize.sm, marginTop: 2 },
-  modalDesc: { color: Colors.textSecondary, fontSize: FontSize.md, marginTop: Spacing.sm, lineHeight: 22 },
-  modalDivider: { height: 1, backgroundColor: Colors.glassBorder, marginVertical: Spacing.lg },
-  modalSectionTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.md },
-  modalStats: { flexDirection: 'row', gap: Spacing.md },
-  modalStatItem: { flex: 1, alignItems: 'center', gap: 4 },
-  modalStatValue: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: '800' },
-  modalStatLabel: { color: Colors.textMuted, fontSize: FontSize.xs, fontWeight: '600' },
-  modalInfoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: Spacing.sm },
-  modalInfoLabel: { color: Colors.textSecondary, fontSize: FontSize.md },
-  modalInfoValue: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: '700' },
-  killBtn: { marginTop: Spacing.lg },
-  killBtnGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: Spacing.md, borderRadius: BorderRadius.xl },
-  killBtnText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '800' },
+  appRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  appIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  appInfo: { flex: 1 },
+  appName: { fontSize: FontSize.md, fontWeight: '700' },
+  appPackage: { fontSize: FontSize.xs, marginTop: 1 },
+  appStats: { flexDirection: 'row', gap: Spacing.md, marginTop: 4 },
+  appStat: { fontSize: FontSize.xs, fontWeight: '600' },
+  killBtn: { width: 32, height: 32, borderRadius: 16, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  emptyText: { fontSize: FontSize.md, marginTop: Spacing.sm, textAlign: 'center' },
+  historyCard: { marginBottom: Spacing.sm },
+  historyHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  historyDate: { fontSize: FontSize.md, fontWeight: '600' },
+  historyStats: { flexDirection: 'row', gap: Spacing.lg, marginTop: Spacing.sm },
+  historyStat: { fontSize: FontSize.sm },
 });

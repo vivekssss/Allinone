@@ -51,6 +51,8 @@ export const appsAPI = {
   },
   sync: (apps: any[]) => api.post('/apps', { apps }),
   killApp: (packageName: string) => api.put('/apps', { packageName, action: 'kill' }),
+  bulkKill: (level: 'dangerous' | 'moderate' | 'all-threats' = 'dangerous') =>
+    api.delete(`/apps?level=${level}`),
 };
 
 // Optimization API
@@ -94,6 +96,43 @@ export const mediaAPI = {
 export const preferencesAPI = {
   get: () => api.get('/user-preferences'),
   update: (data: any) => api.put('/user-preferences', data),
+};
+
+// Battery Health APIs
+export const batteryHealthAPI = {
+  save: (data: any) => api.post('/battery-health', data),
+  getHistory: (days = 30, limit = 30) =>
+    api.get(`/battery-health?days=${days}&limit=${limit}`),
+};
+
+// Device Diagnostics APIs
+export const diagnosticsAPI = {
+  runScan: (components: any[]) => api.post('/diagnostics', { components }),
+  getResults: (type?: string) => {
+    const params = new URLSearchParams();
+    if (type) params.append('type', type);
+    return api.get(`/diagnostics?${params.toString()}`);
+  },
+};
+
+// Downloads APIs
+export const downloadsAPI = {
+  queueDownload: (data: { url: string; title?: string; fileType?: string }) =>
+    api.post('/downloads', data),
+  getHistory: (limit = 50, status?: string) => {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (status) params.append('status', status);
+    return api.get(`/downloads?${params.toString()}`);
+  },
+  updateProgress: (data: { id: string; status?: string; progress?: number }) =>
+    api.put('/downloads', data),
+  deleteDownload: (id: string) => api.delete(`/downloads?id=${id}`),
+};
+
+// Deep Clean APIs
+export const deepCleanAPI = {
+  saveScan: (data: any) => api.post('/deep-clean', data),
+  getHistory: () => api.get('/deep-clean'),
 };
 
 export default api;

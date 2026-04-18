@@ -1,493 +1,628 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Animated, Platform, Dimensions, Modal,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Animated,
+  Dimensions, Modal, Platform, ActivityIndicator, RefreshControl,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Device from 'expo-device';
 import * as Battery from 'expo-battery';
-import * as Haptics from 'expo-haptics';
+import { useTheme } from '@/constants/ThemeContext';
+import { useTranslation } from 'react-i18next';
+import { deviceStatsAPI, boostAPI, batteryHealthAPI, diagnosticsAPI, snapshotsAPI } from '@/services/api';
 import GlassCard from '@/components/GlassCard';
-import GradientButton from '@/components/GradientButton';
-import { Colors, Spacing, FontSize, BorderRadius, Shadows } from '@/constants/theme';
+import { Spacing, FontSize, BorderRadius, Shadows } from '@/constants/theme';
+import '@/i18n';
 
 const { width } = Dimensions.get('window');
 
-interface Snapshot {
-  id: string;
-  timestamp: Date;
-  cpu: { usage: number; status: string };
-  memory: { total: number; used: number; free: number; usagePercent: number; status: string };
-  battery: { level: number; charging: boolean; status: string };
-  storage: { total: number; used: number; free: number; usagePercent: number };
-  device: { model: string; os: string; runningApps: number };
-  performanceScore: number;
-  performanceGrade: string;
-  recommendations: string[];
-}
-
 export default function PerformanceScreen() {
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+
+  const [refreshing, setRefreshing] = useState(false);
+  const [isBoosting, setIsBoosting] = useState(false);
+  const [boostComplete, setBoostComplete] = useState(false);
+  const [boostFeed, setBoostFeed] = useState<string[]>([]);
+  const [boostReport, setBoostReport] = useState<any>(null);
+  const [boostHistory, setBoostHistory] = useState<any[]>([]);
+  const [snapshots, setSnapshots] = useState<any[]>([]);
+  const [detailModal, setDetailModal] = useState<string | null>(null);
+  const [batteryData, setBatteryData] = useState<any>(null);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+
+  // Device stats
   const [batteryLevel, setBatteryLevel] = useState(0);
   const [isCharging, setIsCharging] = useState(false);
-  const [isBoosting, setIsBoosting] = useState(false);
+  const [cpuUsage, setCpuUsage] = useState(32);
+  const [ramUsed, setRamUsed] = useState(0);
+  const [ramTotal, setRamTotal] = useState(0);
+  const [storageUsed, setStorageUsed] = useState(0);
+  const [storageTotal, setStorageTotal] = useState(0);
   const [performanceScore, setPerformanceScore] = useState(72);
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [selectedSnapshot, setSelectedSnapshot] = useState<Snapshot | null>(null);
-  const [showBoostResult, setShowBoostResult] = useState(false);
-  const [boostBefore, setBoostBefore] = useState(0);
-  const [deviceModel, setDeviceModel] = useState('');
-  const [osVersion, setOsVersion] = useState('');
 
   const scoreAnim = useRef(new Animated.Value(0)).current;
-  const boostGlow = useRef(new Animated.Value(0)).current;
-  const boostShake = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     loadDeviceStats();
-    Animated.timing(scoreAnim, { toValue: performanceScore, duration: 1500, useNativeDriver: false }).start();
+    loadBoostHistory();
+    loadBatteryHealth();
+    loadDiagnostics();
+    startPulse();
   }, []);
+
+  const startPulse = () => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.05, duration: 1500, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
+      ])
+    ).start();
+  };
 
   const loadDeviceStats = async () => {
     try {
-      const battery = await Battery.getBatteryLevelAsync();
-      const state = await Battery.getBatteryStateAsync();
-      setBatteryLevel(Math.round(battery * 100));
-      setIsCharging(state === Battery.BatteryState.CHARGING);
-      setDeviceModel(Device.modelName || Device.deviceName || 'Unknown Device');
-      setOsVersion(`${Device.osName || 'OS'} ${Device.osVersion || ''}`);
-    } catch (e) { console.log(e); }
+      const bl = await Battery.getBatteryLevelAsync();
+      const bs = await Battery.getBatteryStateAsync();
+      setBatteryLevel(Math.round(bl * 100));
+      setIsCharging(bs === Battery.BatteryState.CHARGING);
+
+      const totalMem = Device.totalMemory ? Device.totalMemory / (1024 * 1024 * 1024) : 8;
+      const usedMem = totalMem * (0.5 + Math.random() * 0.3);
+      setRamTotal(Math.round(totalMem * 10) / 10);
+      setRamUsed(Math.round(usedMem * 10) / 10);
+
+      setStorageTotal(128);
+      setStorageUsed(45 + Math.floor(Math.random() * 30));
+      setCpuUsage(20 + Math.floor(Math.random() * 35));
+
+      const score = Math.round(100 - (usedMem / totalMem) * 30 - (cpuUsage / 100) * 40);
+      setPerformanceScore(Math.max(20, Math.min(95, score)));
+
+      Animated.spring(scoreAnim, { toValue: 1, useNativeDriver: true }).start();
+    } catch { }
+    setRefreshing(false);
   };
 
-  const takeSnapshot = async () => {
-    try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+  const loadBoostHistory = async () => {
+    try {
+      const res = await boostAPI.getHistory(10);
+      setBoostHistory(res.data.history || []);
+    } catch { }
+  };
 
-    const cpuUsage = Math.round(20 + Math.random() * 50);
-    const memTotal = 6144;
-    const memUsed = Math.round(2000 + Math.random() * 2500);
-    const storTotal = 131072;
-    const storUsed = Math.round(40000 + Math.random() * 50000);
+  const loadBatteryHealth = async () => {
+    try {
+      const res = await batteryHealthAPI.getHistory(30, 15);
+      setBatteryData(res.data);
+    } catch { }
+  };
 
-    const snapshot: Snapshot = {
-      id: Date.now().toString(),
-      timestamp: new Date(),
-      cpu: {
-        usage: cpuUsage,
-        status: cpuUsage > 80 ? 'critical' : cpuUsage > 50 ? 'warning' : 'normal',
-      },
-      memory: {
-        total: memTotal,
-        used: memUsed,
-        free: memTotal - memUsed,
-        usagePercent: Math.round((memUsed / memTotal) * 100),
-        status: memUsed / memTotal > 0.8 ? 'critical' : 'normal',
-      },
-      battery: {
-        level: batteryLevel,
-        charging: isCharging,
-        status: batteryLevel < 20 ? 'low' : batteryLevel < 50 ? 'medium' : 'good',
-      },
-      storage: {
-        total: storTotal,
-        used: storUsed,
-        free: storTotal - storUsed,
-        usagePercent: Math.round((storUsed / storTotal) * 100),
-      },
-      device: {
-        model: deviceModel,
-        os: osVersion,
-        runningApps: Math.round(8 + Math.random() * 15),
-      },
-      performanceScore,
-      performanceGrade: performanceScore >= 90 ? 'A+' : performanceScore >= 80 ? 'A' : performanceScore >= 70 ? 'B' : performanceScore >= 60 ? 'C' : 'D',
-      recommendations: [],
-    };
-
-    // Generate recommendations
-    const recs: string[] = [];
-    if (cpuUsage > 70) recs.push('🔴 High CPU usage — close background apps');
-    if (memUsed / memTotal > 0.75) recs.push('🟡 Memory running low — free up RAM');
-    if (batteryLevel < 30) recs.push('🔋 Low battery — enable power saving');
-    if (storUsed / storTotal > 0.85) recs.push('💾 Storage almost full — delete unused files');
-    if (snapshot.device.runningApps > 15) recs.push(`📱 ${snapshot.device.runningApps} apps running — kill unused ones`);
-    if (recs.length === 0) recs.push('✅ Device is running well — no action needed');
-    snapshot.recommendations = recs;
-
-    setSnapshots(prev => [snapshot, ...prev.slice(0, 19)]);
-    setSelectedSnapshot(snapshot);
-
-    try { await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+  const loadDiagnostics = async () => {
+    try {
+      const res = await diagnosticsAPI.getResults();
+      setDiagnostics(res.data);
+    } catch { }
   };
 
   const runBoost = async () => {
     if (isBoosting) return;
     setIsBoosting(true);
-    setShowBoostResult(false);
-    setBoostBefore(performanceScore);
+    setBoostComplete(false);
+    setBoostFeed([]);
+    setBoostReport(null);
 
-    try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); } catch {}
+    const beforeScore = performanceScore;
+    const beforeCpu = cpuUsage;
+    const beforeRam = ramUsed;
 
-    // Shake animation
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(boostShake, { toValue: 5, duration: 50, useNativeDriver: true }),
-        Animated.timing(boostShake, { toValue: -5, duration: 50, useNativeDriver: true }),
-        Animated.timing(boostShake, { toValue: 0, duration: 50, useNativeDriver: true }),
-      ]),
-      { iterations: 15 }
-    ).start();
+    const feedSteps = [
+      '🔍 Analyzing CPU thread allocation...',
+      '📊 Scanning memory usage patterns...',
+      '🧹 Clearing system cache — freed 124 MB',
+      '⚡ Optimizing CPU thread pool...',
+      '🗑️ Killing com.ads.worker — freed 98 MB',
+      '🗑️ Killing com.data.collector — freed 156 MB',
+      '🗑️ Killing com.crypto.bg — freed 210 MB',
+      '🧠 Reallocating memory blocks...',
+      '📡 Closing idle network connections...',
+      '✅ Optimization complete!',
+    ];
 
-    // Glow animation
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(boostGlow, { toValue: 1, duration: 300, useNativeDriver: true }),
-        Animated.timing(boostGlow, { toValue: 0, duration: 300, useNativeDriver: true }),
-      ]),
-      { iterations: 5 }
-    ).start();
-
-    await new Promise(r => setTimeout(r, 3000));
-
-    const newScore = Math.min(performanceScore + Math.floor(Math.random() * 18 + 8), 99);
-    setPerformanceScore(newScore);
-    Animated.timing(scoreAnim, { toValue: newScore, duration: 800, useNativeDriver: false }).start();
-    setIsBoosting(false);
-    setShowBoostResult(true);
-
-    try { await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-  };
-
-  const getGradeColor = (grade: string) => {
-    switch (grade) {
-      case 'A+': case 'A': return Colors.success;
-      case 'B': return Colors.secondary;
-      case 'C': return Colors.warning;
-      default: return Colors.accent;
+    for (const step of feedSteps) {
+      await new Promise(r => setTimeout(r, 400 + Math.random() * 300));
+      setBoostFeed(prev => [...prev, step]);
     }
+
+    const newCpu = Math.max(10, cpuUsage - 15 - Math.floor(Math.random() * 10));
+    const newRam = Math.round((ramUsed - 0.8 - Math.random() * 0.5) * 10) / 10;
+    const newScore = Math.min(95, performanceScore + 12 + Math.floor(Math.random() * 8));
+
+    setCpuUsage(newCpu);
+    setRamUsed(Math.max(1, newRam));
+    setPerformanceScore(newScore);
+
+    const report = {
+      beforeStats: { cpuUsage: beforeCpu, memoryUsed: beforeRam, performanceScore: beforeScore, runningApps: 12 },
+      afterStats: { cpuUsage: newCpu, memoryUsed: newRam, performanceScore: newScore, runningApps: 7 },
+      appsKilled: [
+        { name: 'Ad Worker', cpuFreed: 8.2, memoryFreed: 98 },
+        { name: 'Data Collector', cpuFreed: 12.5, memoryFreed: 156 },
+        { name: 'Crypto BG', cpuFreed: 5.1, memoryFreed: 210 },
+      ],
+      cacheCleared: 124,
+      duration: 3.8,
+      totalMemoryFreed: 588,
+      totalCpuFreed: 25.8,
+    };
+
+    setBoostReport(report);
+
+    try {
+      await boostAPI.logBoost({
+        beforeStats: report.beforeStats,
+        afterStats: report.afterStats,
+        appsKilled: report.appsKilled.map(a => a.name),
+        memoryFreed: report.totalMemoryFreed,
+        boostType: 'manual',
+      });
+    } catch { }
+
+    setBoostComplete(true);
+    setIsBoosting(false);
+    loadBoostHistory();
   };
 
-  const formatBytes = (mb: number) => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+  const captureSnapshot = async () => {
+    const snapshot = {
+      cpuUsage,
+      memoryUsed: ramUsed,
+      memoryTotal: ramTotal,
+      batteryLevel,
+      performanceScore,
+      timestamp: new Date().toISOString(),
+    };
+    setSnapshots(prev => [snapshot, ...prev].slice(0, 10));
+    try {
+      await snapshotsAPI.capture(snapshot);
+    } catch { }
+  };
+
+  const getScoreColor = (score: number) =>
+    score >= 70 ? colors.success : score >= 45 ? colors.warning : colors.accent;
+
+  const renderGaugeCard = (icon: string, label: string, value: number, max: number, unit: string, color: string, detailKey: string) => (
+    <TouchableOpacity
+      style={dynamicStyles.gaugeCard}
+      onPress={() => setDetailModal(detailKey)}
+      activeOpacity={0.7}
+    >
+      <GlassCard style={dynamicStyles.gaugeCardInner}>
+        <Ionicons name={icon as any} size={20} color={color} />
+        <Text style={[dynamicStyles.gaugeValue, { color: colors.textPrimary }]}>
+          {typeof value === 'number' ? (value % 1 === 0 ? value : value.toFixed(1)) : value}{unit}
+        </Text>
+        <Text style={[dynamicStyles.gaugeLabel, { color: colors.textMuted }]}>{label}</Text>
+        <View style={dynamicStyles.gaugeBarBg}>
+          <View style={[dynamicStyles.gaugeBarFill, { width: `${Math.min(100, (value / max) * 100)}%`, backgroundColor: color }]} />
+        </View>
+        <Ionicons name="chevron-forward" size={12} color={colors.textMuted} style={{ marginTop: 4 }} />
+      </GlassCard>
+    </TouchableOpacity>
+  );
+
+  const dynamicStyles = createStyles(colors);
 
   return (
-    <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <LinearGradient colors={[Colors.secondary + '25', Colors.background]} style={styles.headerGradient}>
-          <Text style={styles.headerTitle}>⚡ Performance</Text>
-          <Text style={styles.headerSubtitle}>Monitor, analyze, and boost your device</Text>
-        </LinearGradient>
+    <ScrollView
+      style={dynamicStyles.container}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadDeviceStats(); }} tintColor={colors.primary} />}
+    >
+      {/* Header */}
+      <LinearGradient colors={[colors.primary + '30', 'transparent']} style={dynamicStyles.header}>
+        <Text style={dynamicStyles.title}>{t('performance.title')}</Text>
+        <Text style={dynamicStyles.subtitle}>{t('performance.subtitle')}</Text>
+      </LinearGradient>
 
-        {/* Score Ring */}
-        <Animated.View style={[styles.scoreSection, { transform: [{ translateX: boostShake }] }]}>
-          <View style={styles.scoreRingOuter}>
-            <LinearGradient colors={[Colors.primary, Colors.secondary]} style={styles.scoreRingGradient}>
-              <View style={styles.scoreRingInner}>
-                <Text style={styles.scoreNumber}>{performanceScore}</Text>
-                <Text style={styles.scoreUnit}>/ 100</Text>
-                <Text style={[styles.gradeText, { color: getGradeColor(performanceScore >= 90 ? 'A+' : performanceScore >= 80 ? 'A' : performanceScore >= 70 ? 'B' : 'C') }]}>
-                  Grade: {performanceScore >= 90 ? 'A+' : performanceScore >= 80 ? 'A' : performanceScore >= 70 ? 'B' : performanceScore >= 60 ? 'C' : 'D'}
-                </Text>
-              </View>
+      {/* Performance Score */}
+      <View style={dynamicStyles.section}>
+        <GlassCard style={dynamicStyles.scoreCard}>
+          <Animated.View style={[dynamicStyles.scoreRing, { borderColor: getScoreColor(performanceScore), transform: [{ scale: pulseAnim }] }]}>
+            <Text style={[dynamicStyles.scoreText, { color: getScoreColor(performanceScore) }]}>{performanceScore}</Text>
+            <Text style={[dynamicStyles.scoreUnit, { color: colors.textMuted }]}>/ 100</Text>
+          </Animated.View>
+          <Text style={[dynamicStyles.scoreStatus, { color: colors.textSecondary }]}>
+            {performanceScore >= 70 ? '🟢 Excellent' : performanceScore >= 45 ? '🟡 Moderate' : '🔴 Needs Boost'}
+          </Text>
+        </GlassCard>
+      </View>
+
+      {/* Boost Actions */}
+      <View style={dynamicStyles.section}>
+        <View style={dynamicStyles.boostRow}>
+          <TouchableOpacity style={dynamicStyles.boostBtn} onPress={runBoost} disabled={isBoosting} activeOpacity={0.8}>
+            <LinearGradient
+              colors={isBoosting ? [colors.textMuted, colors.textMuted] : [colors.primary, colors.secondary]}
+              style={dynamicStyles.boostGradient}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            >
+              {isBoosting ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="flash" size={18} color="#fff" />}
+              <Text style={dynamicStyles.boostText}>{isBoosting ? t('performance.boosting') : t('performance.cpuBoost')}</Text>
             </LinearGradient>
-          </View>
+          </TouchableOpacity>
+          <TouchableOpacity style={dynamicStyles.boostBtn} onPress={captureSnapshot} activeOpacity={0.8}>
+            <LinearGradient
+              colors={[colors.success, colors.successDark]}
+              style={dynamicStyles.boostGradient}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            >
+              <Ionicons name="camera" size={18} color="#fff" />
+              <Text style={dynamicStyles.boostText}>{t('performance.snapshot')}</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </View>
 
-          {/* Boost Result */}
-          {showBoostResult && (
-            <GlassCard style={styles.boostResultCard}>
-              <Ionicons name="trending-up" size={24} color={Colors.success} />
-              <View>
-                <Text style={styles.boostResultTitle}>Boost Complete! 🎉</Text>
-                <Text style={styles.boostResultText}>
-                  Score improved from {boostBefore} → {performanceScore} (+{performanceScore - boostBefore} points)
+      {/* Live Boost Feed */}
+      {boostFeed.length > 0 && (
+        <View style={dynamicStyles.section}>
+          <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>⚡ Live Boost Feed</Text>
+          <GlassCard noPadding>
+            <ScrollView style={dynamicStyles.feedContainer} nestedScrollEnabled>
+              {boostFeed.map((msg, i) => (
+                <View key={i} style={dynamicStyles.feedItem}>
+                  <Text style={[dynamicStyles.feedText, {
+                    color: msg.includes('✅') ? colors.success : msg.includes('🗑️') ? colors.accent : colors.textSecondary
+                  }]}>{msg}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          </GlassCard>
+        </View>
+      )}
+
+      {/* Boost Report */}
+      {boostComplete && boostReport && (
+        <View style={dynamicStyles.section}>
+          <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('performance.boostReport')} 📊</Text>
+          <GlassCard>
+            <View style={dynamicStyles.reportRow}>
+              <Text style={[dynamicStyles.reportLabel, { color: colors.textSecondary }]}>Score</Text>
+              <Text style={[dynamicStyles.reportValue, { color: colors.success }]}>
+                {boostReport.beforeStats.performanceScore} → {boostReport.afterStats.performanceScore}
+                {' '}(+{boostReport.afterStats.performanceScore - boostReport.beforeStats.performanceScore})
+              </Text>
+            </View>
+            <View style={dynamicStyles.reportRow}>
+              <Text style={[dynamicStyles.reportLabel, { color: colors.textSecondary }]}>Memory Freed</Text>
+              <Text style={[dynamicStyles.reportValue, { color: colors.secondary }]}>{boostReport.totalMemoryFreed} MB</Text>
+            </View>
+            <View style={dynamicStyles.reportRow}>
+              <Text style={[dynamicStyles.reportLabel, { color: colors.textSecondary }]}>CPU Freed</Text>
+              <Text style={[dynamicStyles.reportValue, { color: colors.primary }]}>{boostReport.totalCpuFreed}%</Text>
+            </View>
+            <View style={dynamicStyles.reportRow}>
+              <Text style={[dynamicStyles.reportLabel, { color: colors.textSecondary }]}>Cache Cleared</Text>
+              <Text style={[dynamicStyles.reportValue, { color: colors.warning }]}>{boostReport.cacheCleared} MB</Text>
+            </View>
+            <Text style={[dynamicStyles.sectionSubtitle, { color: colors.textPrimary, marginTop: Spacing.sm }]}>Apps Optimized:</Text>
+            {boostReport.appsKilled.map((app: any, i: number) => (
+              <View key={i} style={dynamicStyles.killedApp}>
+                <Ionicons name="close-circle" size={14} color={colors.accent} />
+                <Text style={[dynamicStyles.killedAppName, { color: colors.textSecondary }]}>
+                  {app.name} — CPU: {app.cpuFreed}%, RAM: {app.memoryFreed}MB
                 </Text>
               </View>
-            </GlassCard>
-          )}
-
-          <View style={styles.boostActions}>
-            <GradientButton
-              title={isBoosting ? 'Boosting...' : '⚡ CPU Boost'}
-              onPress={runBoost}
-              loading={isBoosting}
-              colors={[Colors.success, Colors.secondary]}
-              style={{ flex: 1 }}
-            />
-            <GradientButton
-              title="📸 Snapshot"
-              onPress={takeSnapshot}
-              colors={[Colors.primary, Colors.primaryLight]}
-              style={{ flex: 1 }}
-            />
-          </View>
-        </Animated.View>
-
-        {/* System Resources */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>System Resources</Text>
-          <View style={styles.gaugesGrid}>
-            {[
-              { label: 'RAM Usage', value: '2.4 GB', max: '6 GB', percent: 40, icon: 'hardware-chip' as const, color: Colors.primary },
-              { label: 'CPU Usage', value: '32%', max: '100%', percent: 32, icon: 'speedometer' as const, color: Colors.secondary },
-              { label: 'Battery', value: `${batteryLevel}%`, max: '100%', percent: batteryLevel, icon: (isCharging ? 'battery-charging' : 'battery-half') as const, color: batteryLevel > 50 ? Colors.success : Colors.warning },
-              { label: 'Storage', value: '48 GB', max: '128 GB', percent: 37, icon: 'folder' as const, color: Colors.warning },
-            ].map((gauge, i) => (
-              <GlassCard key={i} style={styles.gaugeCard}>
-                <View style={styles.gaugeHeader}>
-                  <View style={[styles.gaugeIcon, { backgroundColor: gauge.color + '20' }]}>
-                    <Ionicons name={gauge.icon} size={18} color={gauge.color} />
-                  </View>
-                  <Text style={styles.gaugeLabel}>{gauge.label}</Text>
-                </View>
-                <Text style={[styles.gaugeValue, { color: gauge.color }]}>{gauge.value}</Text>
-                <View style={styles.gaugeBg}>
-                  <View style={[styles.gaugeFill, { width: `${gauge.percent}%`, backgroundColor: gauge.percent > 80 ? Colors.accent : gauge.color }]} />
-                </View>
-                <Text style={styles.gaugeMax}>{gauge.percent}% of {gauge.max}</Text>
-              </GlassCard>
             ))}
-          </View>
+          </GlassCard>
         </View>
+      )}
 
-        {/* Snapshots History */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📊 CPU Snapshots ({snapshots.length})</Text>
-          {snapshots.length === 0 ? (
-            <GlassCard style={styles.emptySnapshots}>
-              <Ionicons name="camera-outline" size={32} color={Colors.textMuted} />
-              <Text style={styles.emptyText}>No snapshots yet. Tap "Snapshot" to capture device stats.</Text>
-            </GlassCard>
-          ) : (
-            snapshots.map((snap, i) => (
-              <TouchableOpacity key={snap.id} onPress={() => setSelectedSnapshot(snap)}>
-                <GlassCard style={styles.snapshotCard}>
-                  <View style={styles.snapshotHeader}>
-                    <View style={styles.snapshotTimeRow}>
-                      <Ionicons name="time" size={16} color={Colors.textSecondary} />
-                      <Text style={styles.snapshotTime}>
-                        {snap.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </Text>
-                    </View>
-                    <View style={[styles.gradeBadge, { backgroundColor: getGradeColor(snap.performanceGrade) + '20' }]}>
-                      <Text style={[styles.gradeText2, { color: getGradeColor(snap.performanceGrade) }]}>{snap.performanceGrade}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.snapshotStats}>
-                    <View style={styles.snapStat}>
-                      <Text style={styles.snapStatLabel}>CPU</Text>
-                      <Text style={[styles.snapStatValue, { color: snap.cpu.usage > 70 ? Colors.accent : Colors.secondary }]}>{snap.cpu.usage}%</Text>
-                    </View>
-                    <View style={styles.snapStatDivider} />
-                    <View style={styles.snapStat}>
-                      <Text style={styles.snapStatLabel}>RAM</Text>
-                      <Text style={[styles.snapStatValue, { color: Colors.primary }]}>{snap.memory.usagePercent}%</Text>
-                    </View>
-                    <View style={styles.snapStatDivider} />
-                    <View style={styles.snapStat}>
-                      <Text style={styles.snapStatLabel}>Battery</Text>
-                      <Text style={[styles.snapStatValue, { color: snap.battery.level < 30 ? Colors.accent : Colors.success }]}>{snap.battery.level}%</Text>
-                    </View>
-                    <View style={styles.snapStatDivider} />
-                    <View style={styles.snapStat}>
-                      <Text style={styles.snapStatLabel}>Apps</Text>
-                      <Text style={styles.snapStatValue}>{snap.device.runningApps}</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.snapTapHint}>Tap for full details →</Text>
-                </GlassCard>
-              </TouchableOpacity>
-            ))
-          )}
+      {/* Resource Gauge Cards */}
+      <View style={dynamicStyles.section}>
+        <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('performance.systemResources')}</Text>
+        <View style={dynamicStyles.gaugeGrid}>
+          {renderGaugeCard('battery-charging', t('home.battery'), batteryLevel, 100, '%', colors.success, 'battery')}
+          {renderGaugeCard('hardware-chip', t('home.cpu'), cpuUsage, 100, '%', colors.primary, 'cpu')}
+          {renderGaugeCard('server', t('home.ram'), ramUsed, ramTotal, 'GB', colors.secondary, 'ram')}
+          {renderGaugeCard('folder', t('home.storage'), storageUsed, storageTotal, 'GB', colors.warning, 'storage')}
         </View>
+      </View>
 
-        {/* Tips */}
-        <View style={[styles.section, { marginBottom: 100 }]}>
-          <Text style={styles.sectionTitle}>💡 Performance Tips</Text>
-          {[
-            { icon: 'close-circle-outline' as const, tip: 'Close unused background apps to free RAM', priority: 'high', color: Colors.accent },
-            { icon: 'battery-half' as const, tip: 'Enable battery saver mode below 20%', priority: 'medium', color: Colors.warning },
-            { icon: 'trash-outline' as const, tip: 'Clear app caches monthly for extra storage', priority: 'low', color: Colors.success },
-            { icon: 'wifi-outline' as const, tip: 'Disable WiFi/Bluetooth scanning when not needed', priority: 'medium', color: Colors.secondary },
-            { icon: 'refresh-outline' as const, tip: 'Restart device weekly for optimal performance', priority: 'low', color: Colors.primary },
-          ].map((tip, i) => (
-            <GlassCard key={i} style={styles.tipCard}>
-              <View style={[styles.tipIcon, { backgroundColor: tip.color + '20' }]}>
-                <Ionicons name={tip.icon} size={20} color={tip.color} />
-              </View>
-              <Text style={styles.tipText}>{tip.tip}</Text>
-            </GlassCard>
-          ))}
-        </View>
-      </ScrollView>
-
-      {/* Snapshot Detail Modal */}
-      <Modal visible={!!selectedSnapshot} transparent animationType="slide" onRequestClose={() => setSelectedSnapshot(null)}>
-        <View style={styles.modalOverlay}>
-          <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-            {selectedSnapshot && (
-              <>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>📊 Snapshot Details</Text>
-                  <TouchableOpacity onPress={() => setSelectedSnapshot(null)}>
-                    <Ionicons name="close-circle" size={28} color={Colors.textMuted} />
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.modalTimestamp}>
-                  {selectedSnapshot.timestamp.toLocaleString()}
+      {/* Boost History */}
+      <View style={dynamicStyles.section}>
+        <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('performance.boostHistory')}</Text>
+        {boostHistory.length === 0 ? (
+          <GlassCard style={{ alignItems: 'center', paddingVertical: 24 }}>
+            <Ionicons name="time" size={40} color={colors.textMuted} />
+            <Text style={[dynamicStyles.emptyText, { color: colors.textMuted }]}>No boost history yet</Text>
+          </GlassCard>
+        ) : (
+          boostHistory.slice(0, 5).map((boost, i) => (
+            <GlassCard key={i} style={dynamicStyles.historyItem}>
+              <View style={dynamicStyles.historyRow}>
+                <Ionicons name="flash" size={16} color={colors.primary} />
+                <Text style={[dynamicStyles.historyDate, { color: colors.textPrimary }]}>
+                  {new Date(boost.timestamp || boost.createdAt).toLocaleDateString()}
                 </Text>
+                <Text style={[dynamicStyles.historyScore, { color: colors.success }]}>
+                  +{(boost.afterStats?.performanceScore || 0) - (boost.beforeStats?.performanceScore || 0)} pts
+                </Text>
+              </View>
+              <View style={dynamicStyles.historyDetails}>
+                <Text style={[dynamicStyles.historyDetail, { color: colors.textMuted }]}>
+                  🗑️ {boost.appsKilled?.length || 0} apps • 💾 {boost.memoryFreed || 0}MB freed
+                </Text>
+              </View>
+            </GlassCard>
+          ))
+        )}
+      </View>
 
-                {/* Score */}
-                <View style={styles.modalScoreRow}>
-                  <View style={[styles.modalScoreBadge, { borderColor: getGradeColor(selectedSnapshot.performanceGrade) }]}>
-                    <Text style={[styles.modalScoreNum, { color: getGradeColor(selectedSnapshot.performanceGrade) }]}>
-                      {selectedSnapshot.performanceScore}
-                    </Text>
-                    <Text style={styles.modalScoreGrade}>{selectedSnapshot.performanceGrade}</Text>
-                  </View>
-                  <View style={styles.modalScoreInfo}>
-                    <Text style={styles.modalScoreLabel}>Performance Score</Text>
-                    <Text style={styles.modalScoreDesc}>
-                      {selectedSnapshot.performanceScore >= 80 ? 'Excellent performance' : selectedSnapshot.performanceScore >= 60 ? 'Good but could improve' : 'Needs optimization'}
-                    </Text>
-                  </View>
+      {/* Snapshots */}
+      <View style={dynamicStyles.section}>
+        <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('performance.cpuSnapshots')}</Text>
+        {snapshots.length === 0 ? (
+          <GlassCard style={{ alignItems: 'center', paddingVertical: 24 }}>
+            <Ionicons name="analytics" size={40} color={colors.textMuted} />
+            <Text style={[dynamicStyles.emptyText, { color: colors.textMuted }]}>{t('performance.noSnapshots')}</Text>
+          </GlassCard>
+        ) : (
+          snapshots.map((snap, i) => (
+            <GlassCard key={i} style={dynamicStyles.snapshotCard}>
+              <Text style={[dynamicStyles.snapshotTime, { color: colors.textMuted }]}>
+                {new Date(snap.timestamp).toLocaleTimeString()}
+              </Text>
+              <View style={dynamicStyles.snapshotStats}>
+                <Text style={[dynamicStyles.snapshotStat, { color: colors.primary }]}>CPU: {snap.cpuUsage}%</Text>
+                <Text style={[dynamicStyles.snapshotStat, { color: colors.secondary }]}>RAM: {snap.memoryUsed?.toFixed(1)}GB</Text>
+                <Text style={[dynamicStyles.snapshotStat, { color: colors.success }]}>🔋{snap.batteryLevel}%</Text>
+                <Text style={[dynamicStyles.snapshotStat, { color: colors.warning }]}>Score: {snap.performanceScore}</Text>
+              </View>
+            </GlassCard>
+          ))
+        )}
+      </View>
+
+      {/* Tips */}
+      <View style={dynamicStyles.section}>
+        <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('performance.performanceTips')}</Text>
+        <GlassCard>
+          {[
+            { tip: 'Close unused apps to free up RAM', icon: 'close-circle' },
+            { tip: 'Keep battery between 20-80% for longevity', icon: 'battery-half' },
+            { tip: 'Clear app cache regularly', icon: 'trash' },
+            { tip: 'Restart device weekly for optimal performance', icon: 'refresh' },
+          ].map((item, i) => (
+            <View key={i} style={[dynamicStyles.tipItem, i > 0 && { borderTopWidth: 1, borderTopColor: colors.glassBorder }]}>
+              <Ionicons name={item.icon as any} size={16} color={colors.primary} />
+              <Text style={[dynamicStyles.tipText, { color: colors.textSecondary }]}>{item.tip}</Text>
+            </View>
+          ))}
+        </GlassCard>
+      </View>
+
+      <View style={{ height: 100 }} />
+
+      {/* Detail Modals */}
+      <Modal visible={detailModal === 'battery'} transparent animationType="slide" onRequestClose={() => setDetailModal(null)}>
+        <View style={dynamicStyles.modalOverlay}>
+          <View style={[dynamicStyles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={dynamicStyles.modalHeader}>
+              <Text style={[dynamicStyles.modalTitle, { color: colors.textPrimary }]}>🔋 Battery Details</Text>
+              <TouchableOpacity onPress={() => setDetailModal(null)}><Ionicons name="close" size={24} color={colors.textMuted} /></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {[
+                { label: 'Battery Level', value: `${batteryLevel}%`, color: batteryLevel > 50 ? colors.success : colors.warning },
+                { label: 'Charging', value: isCharging ? 'Yes ⚡' : 'No', color: isCharging ? colors.success : colors.textMuted },
+                { label: 'Health', value: batteryData?.current?.batteryHealth || 'Good', color: colors.success },
+                { label: 'Cycle Count', value: `${batteryData?.current?.cycleCount || 300}`, color: colors.info },
+                { label: 'Temperature', value: `${batteryData?.current?.temperature?.toFixed(1) || '29.5'}°C`, color: colors.warning },
+                { label: 'Voltage', value: `${batteryData?.current?.voltage?.toFixed(2) || '3.85'}V`, color: colors.secondary },
+                { label: 'Capacity', value: `${batteryData?.current?.capacityMah || 4500} / ${batteryData?.current?.designCapacityMah || 5000} mAh`, color: colors.primary },
+                { label: 'Degradation', value: `${batteryData?.current?.degradationPercent?.toFixed(1) || '8.5'}%`, color: colors.accent },
+                { label: 'Est. Lifespan', value: `${batteryData?.lifespan?.monthsRemaining || 18} months`, color: colors.success },
+                { label: 'Health Grade', value: batteryData?.lifespan?.healthGrade || 'A', color: colors.success },
+              ].map((item, i) => (
+                <View key={i} style={dynamicStyles.detailRow}>
+                  <Text style={[dynamicStyles.detailLabel, { color: colors.textSecondary }]}>{item.label}</Text>
+                  <Text style={[dynamicStyles.detailValue, { color: item.color }]}>{item.value}</Text>
                 </View>
-
-                <View style={styles.modalDivider} />
-
-                {/* CPU Details */}
-                <Text style={styles.modalSectionTitle}>🖥️ CPU</Text>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Usage</Text>
-                  <Text style={[styles.detailValue, { color: selectedSnapshot.cpu.usage > 70 ? Colors.accent : Colors.textPrimary }]}>{selectedSnapshot.cpu.usage}%</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Status</Text>
-                  <Text style={[styles.detailValue, { color: selectedSnapshot.cpu.status === 'critical' ? Colors.accent : selectedSnapshot.cpu.status === 'warning' ? Colors.warning : Colors.success }]}>
-                    {selectedSnapshot.cpu.status.toUpperCase()}
-                  </Text>
-                </View>
-                <View style={styles.detailBarBg}>
-                  <View style={[styles.detailBarFill, { width: `${selectedSnapshot.cpu.usage}%`, backgroundColor: selectedSnapshot.cpu.usage > 70 ? Colors.accent : Colors.secondary }]} />
-                </View>
-
-                <View style={styles.modalDivider} />
-
-                {/* Memory Details */}
-                <Text style={styles.modalSectionTitle}>💾 Memory</Text>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Total</Text><Text style={styles.detailValue}>{formatBytes(selectedSnapshot.memory.total)}</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Used</Text><Text style={styles.detailValue}>{formatBytes(selectedSnapshot.memory.used)}</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Free</Text><Text style={[styles.detailValue, { color: Colors.success }]}>{formatBytes(selectedSnapshot.memory.free)}</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Usage</Text><Text style={styles.detailValue}>{selectedSnapshot.memory.usagePercent}%</Text></View>
-                <View style={styles.detailBarBg}>
-                  <View style={[styles.detailBarFill, { width: `${selectedSnapshot.memory.usagePercent}%`, backgroundColor: Colors.primary }]} />
-                </View>
-
-                <View style={styles.modalDivider} />
-
-                {/* Battery */}
-                <Text style={styles.modalSectionTitle}>🔋 Battery</Text>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Level</Text><Text style={styles.detailValue}>{selectedSnapshot.battery.level}%</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Charging</Text><Text style={styles.detailValue}>{selectedSnapshot.battery.charging ? '⚡ Yes' : 'No'}</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Status</Text><Text style={[styles.detailValue, { color: selectedSnapshot.battery.status === 'low' ? Colors.accent : Colors.success }]}>{selectedSnapshot.battery.status.toUpperCase()}</Text></View>
-
-                <View style={styles.modalDivider} />
-
-                {/* Storage */}
-                <Text style={styles.modalSectionTitle}>📦 Storage</Text>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Total</Text><Text style={styles.detailValue}>{formatBytes(selectedSnapshot.storage.total)}</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Used</Text><Text style={styles.detailValue}>{formatBytes(selectedSnapshot.storage.used)}</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Free</Text><Text style={[styles.detailValue, { color: Colors.success }]}>{formatBytes(selectedSnapshot.storage.free)}</Text></View>
-                <View style={styles.detailBarBg}>
-                  <View style={[styles.detailBarFill, { width: `${selectedSnapshot.storage.usagePercent}%`, backgroundColor: Colors.warning }]} />
-                </View>
-
-                <View style={styles.modalDivider} />
-
-                {/* Device */}
-                <Text style={styles.modalSectionTitle}>📱 Device</Text>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Model</Text><Text style={styles.detailValue}>{selectedSnapshot.device.model}</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>OS</Text><Text style={styles.detailValue}>{selectedSnapshot.device.os}</Text></View>
-                <View style={styles.detailRow}><Text style={styles.detailLabel}>Running Apps</Text><Text style={styles.detailValue}>{selectedSnapshot.device.runningApps}</Text></View>
-
-                <View style={styles.modalDivider} />
-
-                {/* Recommendations */}
-                <Text style={styles.modalSectionTitle}>💡 Recommendations</Text>
-                {selectedSnapshot.recommendations.map((rec, i) => (
-                  <Text key={i} style={styles.recItem}>{rec}</Text>
+              ))}
+              <View style={dynamicStyles.tipsSection}>
+                <Text style={[dynamicStyles.tipsTitle, { color: colors.textPrimary }]}>💡 Battery Tips</Text>
+                {['Avoid charging to 100%', 'Don\'t let battery drop below 20%', 'Use original charger', 'Avoid extreme temperatures'].map((tip, i) => (
+                  <Text key={i} style={[dynamicStyles.tipTextModal, { color: colors.textSecondary }]}>• {tip}</Text>
                 ))}
-
-                <View style={{ height: 40 }} />
-              </>
-            )}
-          </ScrollView>
+              </View>
+            </ScrollView>
+          </View>
         </View>
       </Modal>
-    </View>
+
+      <Modal visible={detailModal === 'cpu'} transparent animationType="slide" onRequestClose={() => setDetailModal(null)}>
+        <View style={dynamicStyles.modalOverlay}>
+          <View style={[dynamicStyles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={dynamicStyles.modalHeader}>
+              <Text style={[dynamicStyles.modalTitle, { color: colors.textPrimary }]}>⚙️ CPU Details</Text>
+              <TouchableOpacity onPress={() => setDetailModal(null)}><Ionicons name="close" size={24} color={colors.textMuted} /></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {[
+                { label: 'Current Usage', value: `${cpuUsage}%`, color: cpuUsage > 60 ? colors.accent : colors.success },
+                { label: 'Architecture', value: Device.osInternalBuildId ? 'ARM64' : 'ARM64', color: colors.info },
+                { label: 'Cores', value: '8 Cores', color: colors.primary },
+                { label: 'Model', value: Device.modelName || 'Unknown', color: colors.secondary },
+                { label: 'Temperature', value: `${38 + Math.floor(Math.random() * 8)}°C`, color: colors.warning },
+              ].map((item, i) => (
+                <View key={i} style={dynamicStyles.detailRow}>
+                  <Text style={[dynamicStyles.detailLabel, { color: colors.textSecondary }]}>{item.label}</Text>
+                  <Text style={[dynamicStyles.detailValue, { color: item.color }]}>{item.value}</Text>
+                </View>
+              ))}
+              <Text style={[dynamicStyles.tipsTitle, { color: colors.textPrimary, marginTop: 16 }]}>🔥 Top CPU Processes</Text>
+              {[
+                { name: 'System UI', usage: 8.2 },
+                { name: 'Camera Service', usage: 5.4 },
+                { name: 'Location Service', usage: 3.8 },
+                { name: 'Notifications', usage: 2.1 },
+              ].map((proc, i) => (
+                <View key={i} style={dynamicStyles.processRow}>
+                  <Text style={[dynamicStyles.processName, { color: colors.textSecondary }]}>{proc.name}</Text>
+                  <Text style={[dynamicStyles.processUsage, { color: colors.primary }]}>{proc.usage}%</Text>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={detailModal === 'ram'} transparent animationType="slide" onRequestClose={() => setDetailModal(null)}>
+        <View style={dynamicStyles.modalOverlay}>
+          <View style={[dynamicStyles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={dynamicStyles.modalHeader}>
+              <Text style={[dynamicStyles.modalTitle, { color: colors.textPrimary }]}>💾 RAM Details</Text>
+              <TouchableOpacity onPress={() => setDetailModal(null)}><Ionicons name="close" size={24} color={colors.textMuted} /></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {[
+                { label: 'Total', value: `${ramTotal} GB`, color: colors.info },
+                { label: 'Used', value: `${ramUsed} GB`, color: colors.accent },
+                { label: 'Free', value: `${(ramTotal - ramUsed).toFixed(1)} GB`, color: colors.success },
+                { label: 'Usage', value: `${Math.round((ramUsed / ramTotal) * 100)}%`, color: colors.warning },
+                { label: 'Type', value: 'LPDDR5X', color: colors.secondary },
+              ].map((item, i) => (
+                <View key={i} style={dynamicStyles.detailRow}>
+                  <Text style={[dynamicStyles.detailLabel, { color: colors.textSecondary }]}>{item.label}</Text>
+                  <Text style={[dynamicStyles.detailValue, { color: item.color }]}>{item.value}</Text>
+                </View>
+              ))}
+              <Text style={[dynamicStyles.tipsTitle, { color: colors.textPrimary, marginTop: 16 }]}>📱 Top RAM Apps</Text>
+              {[
+                { name: 'Social Media', usage: 380 },
+                { name: 'Browser', usage: 245 },
+                { name: 'Gaming', usage: 512 },
+                { name: 'System', usage: 680 },
+              ].map((app, i) => (
+                <View key={i} style={dynamicStyles.processRow}>
+                  <Text style={[dynamicStyles.processName, { color: colors.textSecondary }]}>{app.name}</Text>
+                  <Text style={[dynamicStyles.processUsage, { color: colors.secondary }]}>{app.usage}MB</Text>
+                </View>
+              ))}
+              <TouchableOpacity style={[dynamicStyles.actionBtn, { backgroundColor: colors.primary + '20', marginTop: 16 }]} onPress={runBoost}>
+                <Text style={[dynamicStyles.actionBtnText, { color: colors.primary }]}>🚀 Free RAM Now</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={detailModal === 'storage'} transparent animationType="slide" onRequestClose={() => setDetailModal(null)}>
+        <View style={dynamicStyles.modalOverlay}>
+          <View style={[dynamicStyles.modalContent, { backgroundColor: colors.surface }]}>
+            <View style={dynamicStyles.modalHeader}>
+              <Text style={[dynamicStyles.modalTitle, { color: colors.textPrimary }]}>📁 Storage Details</Text>
+              <TouchableOpacity onPress={() => setDetailModal(null)}><Ionicons name="close" size={24} color={colors.textMuted} /></TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {[
+                { label: 'Total', value: `${storageTotal} GB`, color: colors.info },
+                { label: 'Used', value: `${storageUsed} GB`, color: colors.warning },
+                { label: 'Free', value: `${storageTotal - storageUsed} GB`, color: colors.success },
+              ].map((item, i) => (
+                <View key={i} style={dynamicStyles.detailRow}>
+                  <Text style={[dynamicStyles.detailLabel, { color: colors.textSecondary }]}>{item.label}</Text>
+                  <Text style={[dynamicStyles.detailValue, { color: item.color }]}>{item.value}</Text>
+                </View>
+              ))}
+              <Text style={[dynamicStyles.tipsTitle, { color: colors.textPrimary, marginTop: 16 }]}>📊 Storage Breakdown</Text>
+              {[
+                { category: 'Apps', size: 12.4, color: colors.primary },
+                { category: 'Photos', size: 8.7, color: colors.success },
+                { category: 'Videos', size: 15.2, color: colors.secondary },
+                { category: 'Music', size: 3.1, color: colors.warning },
+                { category: 'Cache', size: 2.8, color: colors.accent },
+                { category: 'System', size: 5.6, color: colors.info },
+                { category: 'Other', size: storageUsed - 47.8 > 0 ? Math.round((storageUsed - 47.8) * 10) / 10 : 1.2, color: colors.textMuted },
+              ].map((cat, i) => (
+                <View key={i} style={dynamicStyles.storageRow}>
+                  <View style={[dynamicStyles.storageDot, { backgroundColor: cat.color }]} />
+                  <Text style={[dynamicStyles.processName, { color: colors.textSecondary, flex: 1 }]}>{cat.category}</Text>
+                  <Text style={[dynamicStyles.processUsage, { color: cat.color }]}>{cat.size} GB</Text>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  headerGradient: { paddingTop: Platform.OS === 'ios' ? 60 : 48, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.lg },
-  headerTitle: { color: Colors.textPrimary, fontSize: FontSize.title, fontWeight: '800' },
-  headerSubtitle: { color: Colors.textSecondary, fontSize: FontSize.md, marginTop: 4 },
-  scoreSection: { alignItems: 'center', paddingVertical: Spacing.lg },
-  scoreRingOuter: { ...Shadows.glow },
-  scoreRingGradient: { width: 160, height: 160, borderRadius: 80, padding: 6 },
-  scoreRingInner: { flex: 1, borderRadius: 74, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center' },
-  scoreNumber: { color: Colors.textPrimary, fontSize: 48, fontWeight: '900' },
-  scoreUnit: { color: Colors.textMuted, fontSize: FontSize.md, fontWeight: '600' },
-  gradeText: { fontSize: FontSize.sm, fontWeight: '700', marginTop: 2 },
-  boostResultCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginTop: Spacing.lg, marginHorizontal: Spacing.lg, borderColor: Colors.success + '30' },
-  boostResultTitle: { color: Colors.success, fontSize: FontSize.md, fontWeight: '700' },
-  boostResultText: { color: Colors.textSecondary, fontSize: FontSize.sm, marginTop: 2 },
-  boostActions: { flexDirection: 'row', gap: Spacing.md, paddingHorizontal: Spacing.xl, marginTop: Spacing.lg, width: '100%' },
-  section: { paddingHorizontal: Spacing.lg, marginTop: Spacing.xl },
-  sectionTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.md },
-  gaugesGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  gaugeCard: { width: (width - Spacing.lg * 2 - Spacing.sm) / 2 - 0.5 },
-  gaugeHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.sm },
-  gaugeIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  gaugeLabel: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '600' },
-  gaugeValue: { fontSize: FontSize.xl, fontWeight: '800', marginBottom: Spacing.sm },
-  gaugeBg: { height: 6, backgroundColor: Colors.card, borderRadius: 3, overflow: 'hidden' },
-  gaugeFill: { height: '100%', borderRadius: 3 },
-  gaugeMax: { color: Colors.textMuted, fontSize: FontSize.xs, marginTop: 4 },
-  emptySnapshots: { alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.xl },
-  emptyText: { color: Colors.textMuted, fontSize: FontSize.md, textAlign: 'center' },
+const createStyles = (colors: any) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.background },
+  header: { paddingHorizontal: Spacing.lg, paddingTop: Platform.OS === 'ios' ? 60 : 50, paddingBottom: Spacing.lg },
+  title: { color: colors.textPrimary, fontSize: FontSize.title, fontWeight: '800' },
+  subtitle: { color: colors.textSecondary, fontSize: FontSize.md, marginTop: 4 },
+  section: { paddingHorizontal: Spacing.lg, marginTop: Spacing.md },
+  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.sm },
+  sectionSubtitle: { fontSize: FontSize.md, fontWeight: '600' },
+  scoreCard: { alignItems: 'center', paddingVertical: Spacing.lg },
+  scoreRing: { width: 100, height: 100, borderRadius: 50, borderWidth: 4, alignItems: 'center', justifyContent: 'center' },
+  scoreText: { fontSize: 36, fontWeight: '900' },
+  scoreUnit: { fontSize: FontSize.xs },
+  scoreStatus: { fontSize: FontSize.md, marginTop: Spacing.sm },
+  boostRow: { flexDirection: 'row', gap: Spacing.sm },
+  boostBtn: { flex: 1 },
+  boostGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 14, borderRadius: BorderRadius.lg },
+  boostText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
+  feedContainer: { maxHeight: 200, padding: Spacing.md },
+  feedItem: { paddingVertical: 3 },
+  feedText: { fontSize: FontSize.sm, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  gaugeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  gaugeCard: { width: (width - Spacing.lg * 2 - Spacing.sm) / 2 - 1 },
+  gaugeCardInner: { alignItems: 'center', paddingVertical: Spacing.md },
+  gaugeValue: { fontSize: FontSize.xxl, fontWeight: '800', marginTop: 4 },
+  gaugeLabel: { fontSize: FontSize.xs, marginTop: 2, marginBottom: 6 },
+  gaugeBarBg: { width: '80%', height: 4, backgroundColor: colors.glassBorder, borderRadius: 2 },
+  gaugeBarFill: { height: 4, borderRadius: 2 },
+  historyItem: { marginBottom: Spacing.sm },
+  historyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  historyDate: { flex: 1, fontSize: FontSize.md, fontWeight: '600' },
+  historyScore: { fontSize: FontSize.md, fontWeight: '700' },
+  historyDetails: { marginTop: 4 },
+  historyDetail: { fontSize: FontSize.sm },
   snapshotCard: { marginBottom: Spacing.sm },
-  snapshotHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm },
-  snapshotTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  snapshotTime: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: '600' },
-  gradeBadge: { paddingHorizontal: Spacing.md, paddingVertical: 4, borderRadius: BorderRadius.full },
-  gradeText2: { fontSize: FontSize.md, fontWeight: '800' },
-  snapshotStats: { flexDirection: 'row', alignItems: 'center' },
-  snapStat: { flex: 1, alignItems: 'center' },
-  snapStatLabel: { color: Colors.textMuted, fontSize: FontSize.xs, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  snapStatValue: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: '800', marginTop: 2 },
-  snapStatDivider: { width: 1, height: 30, backgroundColor: Colors.glassBorder },
-  snapTapHint: { color: Colors.primary, fontSize: FontSize.xs, fontWeight: '600', textAlign: 'right', marginTop: Spacing.sm },
-  tipCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, marginBottom: Spacing.sm },
-  tipIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  tipText: { color: Colors.textPrimary, fontSize: FontSize.md, flex: 1 },
-  // Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)' },
-  modalContent: { flex: 1, backgroundColor: Colors.surface, marginTop: 60, borderTopLeftRadius: BorderRadius.xl, borderTopRightRadius: BorderRadius.xl, padding: Spacing.xl },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm },
-  modalTitle: { color: Colors.textPrimary, fontSize: FontSize.xxl, fontWeight: '800' },
-  modalTimestamp: { color: Colors.textSecondary, fontSize: FontSize.md, marginBottom: Spacing.lg },
-  modalScoreRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.lg },
-  modalScoreBadge: { width: 80, height: 80, borderRadius: 40, borderWidth: 3, alignItems: 'center', justifyContent: 'center' },
-  modalScoreNum: { fontSize: FontSize.title, fontWeight: '900' },
-  modalScoreGrade: { color: Colors.textMuted, fontSize: FontSize.xs, fontWeight: '700' },
-  modalScoreInfo: { flex: 1 },
-  modalScoreLabel: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: '700' },
-  modalScoreDesc: { color: Colors.textSecondary, fontSize: FontSize.md, marginTop: 2 },
-  modalDivider: { height: 1, backgroundColor: Colors.glassBorder, marginVertical: Spacing.md },
-  modalSectionTitle: { color: Colors.textPrimary, fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.sm },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
-  detailLabel: { color: Colors.textSecondary, fontSize: FontSize.md },
-  detailValue: { color: Colors.textPrimary, fontSize: FontSize.md, fontWeight: '700' },
-  detailBarBg: { height: 8, backgroundColor: Colors.card, borderRadius: 4, overflow: 'hidden', marginTop: Spacing.sm },
-  detailBarFill: { height: '100%', borderRadius: 4 },
-  recItem: { color: Colors.textPrimary, fontSize: FontSize.md, paddingVertical: 6, lineHeight: 20 },
+  snapshotTime: { fontSize: FontSize.xs, marginBottom: 4 },
+  snapshotStats: { flexDirection: 'row', gap: Spacing.md, flexWrap: 'wrap' },
+  snapshotStat: { fontSize: FontSize.sm, fontWeight: '600' },
+  emptyText: { fontSize: FontSize.md, marginTop: Spacing.sm, textAlign: 'center' },
+  reportRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.glassBorder },
+  reportLabel: { fontSize: FontSize.md },
+  reportValue: { fontSize: FontSize.md, fontWeight: '700' },
+  killedApp: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  killedAppName: { fontSize: FontSize.sm },
+  tipItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.sm },
+  tipText: { fontSize: FontSize.sm, flex: 1 },
+  // Modal styles
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: Spacing.lg, maxHeight: '80%' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.lg },
+  modalTitle: { fontSize: FontSize.xl, fontWeight: '800' },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.glassBorder },
+  detailLabel: { fontSize: FontSize.md },
+  detailValue: { fontSize: FontSize.md, fontWeight: '700' },
+  tipsSection: { marginTop: Spacing.lg },
+  tipsTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.sm },
+  tipTextModal: { fontSize: FontSize.sm, paddingVertical: 4 },
+  processRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
+  processName: { fontSize: FontSize.md },
+  processUsage: { fontSize: FontSize.md, fontWeight: '700' },
+  actionBtn: { paddingVertical: 12, borderRadius: BorderRadius.lg, alignItems: 'center' },
+  actionBtnText: { fontSize: FontSize.md, fontWeight: '700' },
+  storageRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
+  storageDot: { width: 10, height: 10, borderRadius: 5 },
 });
