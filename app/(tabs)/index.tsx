@@ -124,11 +124,23 @@ export default function HomeScreen() {
     setIsDeepCleaning(false);
   };
 
+  const [managedApps, setManagedApps] = useState([
+    { name: 'WhatsApp', package: 'com.whatsapp', icon: 'chatbubbles', status: 'Healthy', cpu: 2.4 },
+    { name: 'Instagram', package: 'com.instagram.android', icon: 'logo-instagram', status: 'Heavy', cpu: 12.8 },
+    { name: 'Browser', package: 'com.android.chrome', icon: 'globe', status: 'Background', cpu: 0.5 },
+    { name: 'Mining Worker', package: 'com.crypto.miner', icon: 'warning', status: 'Dangerous', cpu: 45.2 },
+  ]);
+
   const quickActions = [
-    { icon: 'shield', label: t('home.boostNow'), color: colors.accent, screen: '/(tabs)/security' },
-    { icon: 'trash', label: 'Deep Clean', color: colors.warning, action: 'DEEP_CLEAN' },
-    { icon: 'musical-notes', label: t('home.playMusic'), color: colors.primary, screen: '/(tabs)/media' },
-    { icon: 'camera', label: t('camera.photo'), color: colors.secondary, screen: '/(tabs)/camera' },
+    { icon: 'shield-checkmark', label: 'Security', color: colors.accent, screen: '/(tabs)/security' },
+    { icon: 'trash', label: 'Deep Clean', color: colors.warning, screen: '/tools/deep-clean' },
+    { icon: 'mic', label: 'Voice Hub', color: '#FF3D71', screen: '/tools/voice-hub' },
+    { icon: 'globe', label: 'Bouncer', color: '#00E5FF', screen: '/tools/vpn-bouncer' },
+  ];
+
+  const proSuite = [
+    { icon: 'cube', label: 'Sandbox', desc: 'Secure App Island', color: '#7C4DFF', screen: '/sandbox/dashboard' },
+    { icon: 'pulse', label: 'Interceptor', desc: 'API Traffic Control', color: '#00D2FF', screen: '/sandbox/interceptor' },
   ];
 
   const healthStatus = performanceScore >= 70 ? t('home.excellent') : performanceScore >= 45 ? t('home.couldBeBetter') : t('home.needsOptimization');
@@ -221,18 +233,39 @@ export default function HomeScreen() {
         </View>
       )}
 
+      {/* Pro Suite Section */}
+      <View style={ds.section}>
+        <Text style={ds.sectionTitle}>Pro Suite</Text>
+        <View style={{ gap: 12 }}>
+          {proSuite.map((tool, i) => (
+            <TouchableOpacity key={i} onPress={() => router.push(tool.screen as any)}>
+              <GlassCard style={ds.proCard}>
+                <LinearGradient 
+                  colors={[tool.color + '30', 'transparent']} 
+                  style={ds.proIcon}
+                >
+                  <Ionicons name={tool.icon as any} size={26} color={tool.color} />
+                </LinearGradient>
+                <View style={{ flex: 1, marginLeft: 15 }}>
+                  <Text style={ds.proTitle}>{tool.label}</Text>
+                  <Text style={ds.proDesc}>{tool.desc}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.2)" />
+              </GlassCard>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
       {/* Quick Actions */}
       <View style={ds.section}>
-        <Text style={ds.sectionTitle}>{t('home.quickActions')}</Text>
+        <Text style={ds.sectionTitle}>Quick Tools</Text>
         <View style={ds.actionsGrid}>
           {quickActions.map((action, i) => (
             <TouchableOpacity 
               key={i} 
               style={ds.actionCard} 
-              onPress={() => {
-                if (action.action === 'DEEP_CLEAN') return runDeepClean();
-                if (action.screen) router.push(action.screen as any);
-              }}
+              onPress={() => router.push(action.screen as any)}
             >
               <GlassCard style={ds.actionCardInner}>
                 <View style={[ds.actionIcon, { backgroundColor: action.color + '20' }]}>
@@ -243,6 +276,31 @@ export default function HomeScreen() {
             </TouchableOpacity>
           ))}
         </View>
+      </View>
+
+      {/* Managed Apps List */}
+      <View style={ds.section}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm }}>
+          <Text style={ds.sectionTitle}>Managed Apps</Text>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/security')}>
+            <Text style={{ color: colors.primary, fontWeight: '600' }}>Scan All</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
+          {managedApps.map((app, i) => (
+            <GlassCard key={i} style={ds.appSlideCard}>
+              <View style={[ds.appIconContainer, { backgroundColor: (app.status === 'Dangerous' ? colors.accent : colors.primary) + '20' }]}>
+                <Ionicons name={app.icon as any} size={24} color={app.status === 'Dangerous' ? colors.accent : colors.primary} />
+              </View>
+              <Text style={ds.appSlideName} numberOfLines={1}>{app.name}</Text>
+              <View style={ds.appSlideStat}>
+                <View style={[ds.appStatusDot, { backgroundColor: app.status === 'Dangerous' ? colors.accent : colors.success }]} />
+                <Text style={ds.appSlideStatus}>{app.status}</Text>
+              </View>
+              <Text style={ds.appSlideCpu}>{app.cpu}% CPU</Text>
+            </GlassCard>
+          ))}
+        </ScrollView>
       </View>
 
       {/* Recent Activity */}
@@ -422,10 +480,21 @@ const createStyles = (colors: any) => StyleSheet.create({
   diagCount: { fontSize: FontSize.xxl, fontWeight: '800', marginTop: 4 },
   diagLabel: { fontSize: FontSize.xs, marginTop: 2 },
   actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  proCard: { flexDirection: 'row', alignItems: 'center', padding: 15 },
+  proIcon: { width: 54, height: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  proTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  proDesc: { color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 2 },
   actionCard: { width: (width - Spacing.lg * 2 - Spacing.sm) / 2 - 1 },
   actionCardInner: { alignItems: 'center', paddingVertical: Spacing.lg },
   actionIcon: { width: 52, height: 52, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   actionLabel: { fontSize: FontSize.sm, fontWeight: '600', marginTop: Spacing.sm },
+  appSlideCard: { width: 130, padding: Spacing.md, alignItems: 'center' },
+  appIconContainer: { width: 50, height: 50, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  appSlideName: { color: colors.textPrimary, fontSize: FontSize.sm, fontWeight: '700' },
+  appSlideStat: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  appStatusDot: { width: 6, height: 6, borderRadius: 3 },
+  appSlideStatus: { color: colors.textSecondary, fontSize: 10, fontWeight: '600' },
+  appSlideCpu: { color: colors.primary, fontSize: 10, fontWeight: '700', marginTop: 2 },
   activityItem: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.md },
   activityIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   activityText: { fontSize: FontSize.md, fontWeight: '500' },

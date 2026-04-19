@@ -135,4 +135,14 @@ export const deepCleanAPI = {
   getHistory: () => api.get('/deep-clean'),
 };
 
+// Music Hub APIs
+export const musicHubAPI = {
+  search: (query: string, type: 'song' | 'artist' = 'song') => 
+    api.get(`/music/search?q=${encodeURIComponent(query)}&type=${type}`),
+  getArtists: () => api.get('/music/artists'),
+  followArtist: (data: { name: string; youtubeId?: string; thumbnail?: string; action: 'follow' | 'unfollow' }) => 
+    api.post('/music/artists', data),
+  triggerAutoDownload: () => api.post('/music/auto-download', {}),
+};
+
 export default api;

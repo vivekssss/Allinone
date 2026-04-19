@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, FlatList,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, FlatList, Image,
   Platform, Dimensions, Alert, TextInput, ActivityIndicator, Modal, Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -9,16 +9,18 @@ import { Audio, Video, ResizeMode } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
+import { useRouter } from 'expo-router';
 import { useTheme } from '@/constants/ThemeContext';
 import { useTranslation } from 'react-i18next';
-import { downloadsAPI } from '@/services/api';
+import { downloadsAPI, musicHubAPI } from '@/services/api';
 import GlassCard from '@/components/GlassCard';
 import { Spacing, FontSize, BorderRadius, Shadows } from '@/constants/theme';
+import { useMusic } from '@/context/MusicContext';
 import '@/i18n';
 
 const { width } = Dimensions.get('window');
 
-type MediaTab = 'music' | 'videos' | 'favorites' | 'browse' | 'downloads';
+type MediaTab = 'music' | 'videos' | 'favorites' | 'artists' | 'browse' | 'downloads';
 
 interface MediaFile {
   id: string;
@@ -32,30 +34,42 @@ interface MediaFile {
 export default function MediaScreen() {
   const { colors } = useTheme();
   const { t } = useTranslation();
+  const router = useRouter();
 
+  const { currentTrack, isPlaying, playTrack, togglePlay } = useMusic();
   const [activeTab, setActiveTab] = useState<MediaTab>('music');
   const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [hasPermission, setHasPermission] = useState(false);
-  const [currentTrack, setCurrentTrack] = useState<MediaFile | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [playbackProgress, setPlaybackProgress] = useState(0);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [downloadUrl, setDownloadUrl] = useState('');
   const [downloading, setDownloading] = useState(false);
   const [downloadHistory, setDownloadHistory] = useState<any[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
-  const [nowPlayingModal, setNowPlayingModal] = useState(false);
   const [currentVideo, setCurrentVideo] = useState<MediaFile | null>(null);
+  
+  // Music Hub State
+  const [featuredArtists, setFeaturedArtists] = useState<any[]>([]);
+  const [followedArtists, setFollowedArtists] = useState<any[]>([]);
+  const [artistSearchQuery, setArtistSearchQuery] = useState('');
+  const [artistSearchResults, setArtistSearchResults] = useState<any[]>([]);
+  const [searchingArtists, setSearchingArtists] = useState(false);
+  const [loadingArtists, setLoadingArtists] = useState(false);
 
   const soundRef = useRef<Audio.Sound | null>(null);
 
   useEffect(() => {
     requestPermissions();
     loadDownloadHistory();
-    return () => {
-      if (soundRef.current) soundRef.current.unloadAsync();
-    };
+    loadArtists();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'artists') {
+      const { musicHubAPI: mApi } = require('@/services/api');
+      mApi.triggerAutoDownload().catch(() => {});
+    }
+  }, [activeTab]);
 
   const requestPermissions = async () => {
     try {
@@ -110,53 +124,50 @@ export default function MediaScreen() {
     } catch { }
   };
 
-  const playTrack = async (track: MediaFile) => {
+  const loadArtists = async () => {
+    setLoadingArtists(true);
     try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
-        setIsPlaying(false);
-        setPlaybackProgress(0);
-      }
+      const { musicHubAPI: mApi } = require('@/services/api');
+      const res = await mApi.getArtists();
+      setFeaturedArtists(res.data.featured || []);
+      setFollowedArtists(res.data.followed || []);
+    } catch { }
+    setLoadingArtists(false);
+  };
 
-      if (track.mediaType === 'video') {
-        setCurrentVideo(track);
-        setCurrentTrack(null);
-        return;
-      }
+  const searchArtists = async () => {
+    if (!artistSearchQuery.trim()) return;
+    setSearchingArtists(true);
+    try {
+      const { musicHubAPI: mApi } = require('@/services/api');
+      const res = await mApi.search(artistSearchQuery, 'artist');
+      setArtistSearchResults(res.data.results || []);
+    } catch { }
+    setSearchingArtists(false);
+  };
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: track.uri },
-        { shouldPlay: true },
-        (status) => {
-          if (status.isLoaded) {
-            setPlaybackProgress(
-              status.positionMillis / (status.durationMillis || 1)
-            );
-            if (status.didJustFinish) {
-              setIsPlaying(false);
-              setPlaybackProgress(0);
-            }
-          }
-        }
-      );
-      soundRef.current = sound;
-      setCurrentTrack(track);
-      setIsPlaying(true);
-      setCurrentVideo(null);
+  const toggleFollow = async (artist: any) => {
+    try {
+      const { musicHubAPI: mApi } = require('@/services/api');
+      const isFollowing = followedArtists.some(a => a.name === (artist.name || artist.title));
+      await mApi.followArtist({
+        name: artist.name || artist.title,
+        youtubeId: artist.youtubeId || artist.id,
+        thumbnail: artist.thumbnail,
+        action: isFollowing ? 'unfollow' : 'follow'
+      });
+      loadArtists();
     } catch {
-      Alert.alert('Error', 'Could not play this file');
+      Alert.alert('Error', 'Failed to update follow status');
     }
   };
 
-  const togglePlayPause = async () => {
-    if (!soundRef.current) return;
-    if (isPlaying) {
-      await soundRef.current.pauseAsync();
-    } else {
-      await soundRef.current.playAsync();
+  const handlePlayTrack = async (track: MediaFile) => {
+    if (track.mediaType === 'video') {
+      setCurrentVideo(track);
+      return;
     }
-    setIsPlaying(!isPlaying);
+    await playTrack(track);
   };
 
   const toggleFavorite = (id: string) => {
@@ -240,6 +251,7 @@ export default function MediaScreen() {
 
   const tabs: { key: MediaTab; label: string; icon: string }[] = [
     { key: 'music', label: t('media.music'), icon: 'musical-notes' },
+    { key: 'artists', label: 'Artists', icon: 'people' },
     { key: 'videos', label: t('media.videos'), icon: 'videocam' },
     { key: 'favorites', label: t('media.favorites'), icon: 'heart' },
     { key: 'browse', label: t('media.browse'), icon: 'folder-open' },
@@ -374,6 +386,87 @@ export default function MediaScreen() {
               ))
             )}
           </View>
+        ) : activeTab === 'artists' ? (
+          /* Artists Tab */
+          <View style={ds.section}>
+            <GlassCard style={{ padding: 15, marginBottom: 20 }}>
+              <Text style={[ds.sectionTitle, { color: colors.textPrimary }]}>🔍 Explore Artists</Text>
+              <View style={ds.downloadInputRow}>
+                <TextInput 
+                  style={[ds.downloadInput, { color: colors.textPrimary, borderColor: colors.glassBorder, backgroundColor: colors.card }]}
+                  placeholder="Search Arijit, Taylor Swift, etc..."
+                  placeholderTextColor={colors.textMuted}
+                  value={artistSearchQuery}
+                  onChangeText={setArtistSearchQuery}
+                  onSubmitEditing={searchArtists}
+                />
+                <TouchableOpacity style={ds.downloadBtn} onPress={searchArtists} disabled={searchingArtists}>
+                  <LinearGradient colors={[colors.primary, colors.secondary]} style={ds.downloadBtnGradient}>
+                    {searchingArtists ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="search" size={18} color="#fff" />}
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            </GlassCard>
+
+            {artistSearchResults.length > 0 && (
+              <>
+                <Text style={[ds.sectionTitle, { color: colors.textPrimary }]}>Search Results</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
+                  {artistSearchResults.map((artist, i) => (
+                    <TouchableOpacity key={i} onPress={() => toggleFollow(artist)}>
+                      <GlassCard style={ds.artistCard}>
+                        <Image source={{ uri: artist.thumbnail || 'https://via.placeholder.com/100' }} style={ds.artistImg} />
+                        <Text style={ds.artistName} numberOfLines={1}>{artist.title}</Text>
+                        <View style={[ds.followTag, { backgroundColor: followedArtists.some(a => a.name === artist.title) ? colors.success + '20' : colors.primary + '20' }]}>
+                          <Text style={{ color: followedArtists.some(a => a.name === artist.title) ? colors.success : colors.primary, fontSize: 10, fontWeight: '700' }}>
+                            {followedArtists.some(a => a.name === artist.title) ? 'FOLLOWING' : '+ FOLLOW'}
+                          </Text>
+                        </View>
+                      </GlassCard>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </>
+            )}
+
+            <Text style={[ds.sectionTitle, { color: colors.textPrimary }]}>⭐ Featured Artists</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
+              {featuredArtists.map((artist, i) => (
+                <TouchableOpacity key={i} onPress={() => toggleFollow(artist)}>
+                  <GlassCard style={ds.artistCard}>
+                    <Image source={{ uri: artist.thumbnail }} style={ds.artistImg} />
+                    <Text style={ds.artistName} numberOfLines={1}>{artist.name}</Text>
+                    <View style={[ds.followTag, { backgroundColor: followedArtists.some(a => a.name === artist.name) ? colors.success + '20' : colors.primary + '20' }]}>
+                      <Text style={{ color: followedArtists.some(a => a.name === artist.name) ? colors.success : colors.primary, fontSize: 10, fontWeight: '700' }}>
+                        {followedArtists.some(a => a.name === artist.name) ? 'FOLLOWING' : '+ FOLLOW'}
+                      </Text>
+                    </View>
+                  </GlassCard>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Text style={[ds.sectionTitle, { color: colors.textPrimary }]}>❤️ Your Following</Text>
+            {followedArtists.length === 0 ? (
+              <GlassCard style={{ padding: 30, alignItems: 'center' }}>
+                <Ionicons name="people-outline" size={40} color={colors.textMuted} />
+                <Text style={{ color: colors.textMuted, marginTop: 10 }}>Follow artists to sync daily songs</Text>
+              </GlassCard>
+            ) : (
+              followedArtists.map((artist, i) => (
+                <TouchableOpacity key={i} onPress={() => router.push({ pathname: '/media/artist-detail' as any, params: { name: artist.name, id: artist._id } })}>
+                  <GlassCard style={ds.followedItem}>
+                    <Image source={{ uri: artist.thumbnail || 'https://via.placeholder.com/100' }} style={ds.followedImg} />
+                    <View style={{ flex: 1, marginLeft: 15 }}>
+                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{artist.name}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>Syncing daily tracks...</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="rgba(255,255,255,0.2)" />
+                  </GlassCard>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
         ) : (
           /* Music/Videos/Favorites Tab */
           <View style={ds.section}>
@@ -407,9 +500,17 @@ export default function MediaScreen() {
                         </Text>
                         <Text style={[ds.trackDuration, { color: colors.textMuted }]}>{formatDuration(file.duration)}</Text>
                       </View>
-                      <TouchableOpacity onPress={() => toggleFavorite(file.id)} style={{ padding: 4 }}>
-                        <Ionicons name={favorites.has(file.id) ? 'heart' : 'heart-outline'} size={20} color={favorites.has(file.id) ? colors.accent : colors.textMuted} />
-                      </TouchableOpacity>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <TouchableOpacity 
+                          onPress={() => router.push({ pathname: '/media/editor' as any, params: { uri: file.uri, id: file.id } })}
+                          style={{ padding: 4 }}
+                        >
+                          <Ionicons name="create-outline" size={20} color={colors.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => toggleFavorite(file.id)} style={{ padding: 4 }}>
+                          <Ionicons name={favorites.has(file.id) ? 'heart' : 'heart-outline'} size={20} color={favorites.has(file.id) ? colors.accent : colors.textMuted} />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </GlassCard>
                 </TouchableOpacity>
@@ -420,26 +521,6 @@ export default function MediaScreen() {
 
         <View style={{ height: currentTrack ? 160 : 100 }} />
       </ScrollView>
-
-      {/* Now Playing Bar */}
-      {currentTrack && (
-        <TouchableOpacity style={[ds.nowPlayingBar, { backgroundColor: colors.surface }]} onPress={() => setNowPlayingModal(true)} activeOpacity={0.9}>
-          <View style={ds.npProgressBar}>
-            <View style={[ds.npProgressFill, { width: `${playbackProgress * 100}%`, backgroundColor: colors.primary }]} />
-          </View>
-          <View style={ds.npContent}>
-            <View style={[ds.npIcon, { backgroundColor: colors.card }]}>
-              <Ionicons name="musical-notes" size={20} color={colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[ds.npTitle, { color: colors.textPrimary }]} numberOfLines={1}>{currentTrack.filename.replace(/\.[^.]+$/, '')}</Text>
-            </View>
-            <TouchableOpacity onPress={togglePlayPause} style={[ds.npPlayBtn, { backgroundColor: colors.primary }]}>
-              <Ionicons name={isPlaying ? 'pause' : 'play'} size={20} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      )}
 
       {/* Video Player Modal */}
       <Modal visible={!!currentVideo} animationType="slide" onRequestClose={() => setCurrentVideo(null)} presentationStyle="pageSheet">
@@ -516,4 +597,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   npPlayBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   // FAB
   fab: { position: 'absolute', bottom: Platform.OS === 'ios' ? 150 : 130, right: 20, width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', ...Shadows.glow },
+  // Artists
+  artistCard: { width: 120, alignItems: 'center', marginRight: 15, padding: 12 },
+  artistImg: { width: 80, height: 80, borderRadius: 40, marginBottom: 10 },
+  artistName: { color: '#fff', fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  followTag: { marginTop: 8, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  followedItem: { flexDirection: 'row', alignItems: 'center', padding: 12, marginBottom: 12 },
+  followedImg: { width: 50, height: 50, borderRadius: 25 },
 });

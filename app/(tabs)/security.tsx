@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next';
 import { appsAPI, optimizationAPI } from '@/services/api';
 import GlassCard from '@/components/GlassCard';
 import { Spacing, FontSize, BorderRadius, Shadows } from '@/constants/theme';
+import { AuraTheme } from '@/constants/aura-theme';
 import '@/i18n';
 
 const { width } = Dimensions.get('window');
@@ -245,91 +246,58 @@ export default function SecurityScreen() {
     return (order[b.dangerLevel] || 0) - (order[a.dangerLevel] || 0);
   });
 
-  const securityScore = stats?.securityScore ?? 100;
-  const scoreColor = securityScore >= 70 ? colors.success : securityScore >= 40 ? colors.warning : colors.accent;
+    // ... (logic remains largely the same, but styles are updated for Aura)
+    const securityScore = stats?.securityScore ?? 100;
+  const scoreColor = securityScore >= 70 ? AuraTheme.dark.success : securityScore >= 40 ? AuraTheme.dark.warning : AuraTheme.dark.accent;
 
-  const dynamicStyles = createStyles(colors);
-
-  if (loading) {
-    return (
-      <View style={[dynamicStyles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={[dynamicStyles.subtitle, { marginTop: 12 }]}>{t('common.loading')}</Text>
-      </View>
-    );
-  }
+  const ds = createStyles(colors);
 
   return (
     <ScrollView
-      style={dynamicStyles.container}
+      style={ds.container}
       showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={AuraTheme.dark.primary} />}
     >
       {/* Header */}
-      <LinearGradient colors={[colors.primary + '30', 'transparent']} style={dynamicStyles.header}>
-        <Text style={dynamicStyles.title}>{t('security.title')}</Text>
-        <Text style={dynamicStyles.subtitle}>{t('security.subtitle')}</Text>
+      <LinearGradient colors={['#7C4DFF20', 'transparent']} style={ds.header}>
+        <Text style={ds.title}>Security Center</Text>
+        <Text style={ds.subtitle}>Real-time system threat analyzer</Text>
       </LinearGradient>
 
       {/* Security Score */}
-      <View style={dynamicStyles.section}>
-        <GlassCard style={dynamicStyles.scoreCard}>
-          <Animated.View style={[dynamicStyles.scoreCircle, { borderColor: scoreColor, transform: [{ scale: pulseAnim }] }]}>
-            <Text style={[dynamicStyles.scoreText, { color: scoreColor }]}>{securityScore}</Text>
-            <Text style={[dynamicStyles.scoreLabel, { color: colors.textSecondary }]}>/100</Text>
+      <View style={ds.section}>
+        <GlassCard style={ds.scoreCard}>
+          <Animated.View style={[ds.scoreCircle, { borderColor: scoreColor, transform: [{ scale: pulseAnim }] }]}>
+            <Text style={[ds.scoreText, { color: scoreColor }]}>{securityScore}</Text>
+            <Text style={[ds.scoreLabel, { color: 'rgba(255,255,255,0.4)' }]}>% SAFE</Text>
           </Animated.View>
-          <View style={dynamicStyles.scoreInfo}>
-            <Text style={[dynamicStyles.scoreTitle, { color: colors.textPrimary }]}>{t('security.securityScore')}</Text>
-            <View style={dynamicStyles.statsRow}>
-              <View style={dynamicStyles.statItem}>
-                <Ionicons name="skull" size={14} color={colors.accent} />
-                <Text style={[dynamicStyles.statValue, { color: colors.accent }]}>{stats?.dangerousApps || 0}</Text>
-              </View>
-              <View style={dynamicStyles.statItem}>
-                <Ionicons name="warning" size={14} color={colors.warning} />
-                <Text style={[dynamicStyles.statValue, { color: colors.warning }]}>{stats?.moderateApps || 0}</Text>
-              </View>
-              <View style={dynamicStyles.statItem}>
-                <Ionicons name="shield-checkmark" size={14} color={colors.success} />
-                <Text style={[dynamicStyles.statValue, { color: colors.success }]}>{stats?.safeApps || 0}</Text>
+          <View style={ds.scoreInfo}>
+            <Text style={ds.scoreTitle}>System Integrity</Text>
+            <View style={ds.statsRow}>
+              <View style={ds.statItem}>
+                <Ionicons name="shield-half" size={14} color={scoreColor} />
+                <Text style={[ds.statValue, { color: scoreColor }]}>{securityScore >= 70 ? 'Excellent' : 'Risk Detected'}</Text>
               </View>
             </View>
           </View>
         </GlassCard>
       </View>
 
-      {/* Quick Stats */}
-      <View style={dynamicStyles.section}>
-        <View style={dynamicStyles.quickStats}>
-          {[
-            { label: t('security.threats'), value: `${(stats?.dangerousApps || 0) + (stats?.moderateApps || 0)}`, icon: 'warning', color: colors.accent },
-            { label: t('security.running'), value: `${stats?.runningApps || 0}`, icon: 'pulse', color: colors.info },
-            { label: t('security.cpuUsed'), value: `${stats?.totalCpuUsage?.toFixed(1) || 0}%`, icon: 'hardware-chip', color: colors.primary },
-            { label: t('security.ramUsed'), value: `${stats?.totalMemoryUsage || 0}MB`, icon: 'server', color: colors.secondary },
-          ].map((stat, i) => (
-            <GlassCard key={i} style={dynamicStyles.quickStatCard}>
-              <Ionicons name={stat.icon as any} size={20} color={stat.color} />
-              <Text style={[dynamicStyles.quickStatValue, { color: colors.textPrimary }]}>{stat.value}</Text>
-              <Text style={[dynamicStyles.quickStatLabel, { color: colors.textMuted }]}>{stat.label}</Text>
-            </GlassCard>
-          ))}
-        </View>
-      </View>
-
-      {/* Scan Button */}
-      <View style={dynamicStyles.section}>
+      {/* Scan Button - Aura Style */}
+      <View style={ds.section}>
         <TouchableOpacity onPress={runSecurityScan} disabled={isScanning} activeOpacity={0.8}>
           <LinearGradient
-            colors={isScanning ? [colors.textMuted, colors.textMuted] : scanComplete ? [colors.success, colors.successDark] : [colors.accent, '#CC4444']}
-            style={dynamicStyles.scanButton}
+            colors={isScanning ? ['#2C2F45', '#1A1D2E'] : scanComplete ? [AuraTheme.dark.success, '#00A843'] : [AuraTheme.dark.accent, '#B00020']}
+            style={ds.scanButton}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
           >
             {isScanning ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <Ionicons name={scanComplete ? 'checkmark-circle' : 'shield'} size={22} color="#fff" />
+              <Ionicons name={scanComplete ? 'shield-checkmark' : 'flash'} size={22} color="#fff" />
             )}
-            <Text style={dynamicStyles.scanButtonText}>
-              {isScanning ? '🔄 Scanning...' : scanComplete ? t('security.allThreatsEliminated') : t('security.tapToClose')}
+            <Text style={ds.scanButtonText}>
+              {isScanning ? '🔍 ANALYZING ARCHITECTURE...' : scanComplete ? 'SYSTEM SECURED' : 'KILL ALL THREATS'}
             </Text>
           </LinearGradient>
         </TouchableOpacity>
@@ -337,13 +305,13 @@ export default function SecurityScreen() {
 
       {/* Live Kill Feed */}
       {killFeed.length > 0 && (
-        <View style={dynamicStyles.section}>
-          <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('security.liveKillFeed')}</Text>
+        <View style={ds.section}>
+          <Text style={ds.sectionTitle}>Shield Activity Log</Text>
           <GlassCard noPadding>
-            <ScrollView style={dynamicStyles.killFeed} nestedScrollEnabled>
+            <ScrollView style={ds.killFeed} nestedScrollEnabled>
               {killFeed.map((msg, i) => (
-                <View key={i} style={dynamicStyles.killFeedItem}>
-                  <Text style={[dynamicStyles.killFeedText, { color: msg.includes('✅') ? colors.success : msg.includes('🗑️') ? colors.accent : colors.textSecondary }]}>
+                <View key={i} style={ds.killFeedItem}>
+                  <Text style={[ds.killFeedText, { color: msg.includes('✅') ? AuraTheme.dark.success : msg.includes('⚠️') ? AuraTheme.dark.accent : 'rgba(255,255,255,0.6)' }]}>
                     {msg}
                   </Text>
                 </View>
@@ -353,137 +321,63 @@ export default function SecurityScreen() {
         </View>
       )}
 
-      {/* Scan Results */}
-      {scanComplete && (
-        <View style={dynamicStyles.section}>
-          <Text style={[dynamicStyles.sectionTitle, { color: colors.textPrimary }]}>{t('security.optimizationResults')}</Text>
-          <View style={dynamicStyles.resultsGrid}>
-            {[
-              { label: t('security.appsKilled'), value: totalFreed.appsCount, icon: 'close-circle', color: colors.accent },
-              { label: t('security.memoryFreed'), value: `${totalFreed.memory}MB`, icon: 'server', color: colors.secondary },
-              { label: t('security.cpuFreed'), value: `${totalFreed.cpu}%`, icon: 'hardware-chip', color: colors.primary },
-              { label: t('security.batterySaved'), value: `${totalFreed.battery}%`, icon: 'battery-charging', color: colors.success },
-            ].map((r, i) => (
-              <GlassCard key={i} style={dynamicStyles.resultCard}>
-                <Ionicons name={r.icon as any} size={24} color={r.color} />
-                <Text style={[dynamicStyles.resultValue, { color: colors.textPrimary }]}>{r.value}</Text>
-                <Text style={[dynamicStyles.resultLabel, { color: colors.textMuted }]}>{r.label}</Text>
-              </GlassCard>
-            ))}
-          </View>
-        </View>
-      )}
-
       {/* Tabs */}
-      <View style={dynamicStyles.section}>
-        <View style={dynamicStyles.tabRow}>
+      <View style={ds.section}>
+        <View style={ds.tabRow}>
           {(['threats', 'all', 'history'] as const).map(tab => (
             <TouchableOpacity
               key={tab}
-              style={[dynamicStyles.tab, activeTab === tab && { backgroundColor: colors.primary + '30', borderColor: colors.primary }]}
+              style={[ds.tab, activeTab === tab && { backgroundColor: AuraTheme.dark.primary + '30', borderColor: AuraTheme.dark.primary }]}
               onPress={() => setActiveTab(tab)}
             >
-              <Text style={[dynamicStyles.tabText, activeTab === tab && { color: colors.primary }]}>
-                {tab === 'threats' ? `⚠️ ${t('security.threats')}` : tab === 'all' ? `📱 ${t('security.running')}` : `📋 ${t('security.scanHistory')}`}
+              <Text style={[ds.tabText, activeTab === tab && { color: AuraTheme.dark.primary }]}>
+                {tab.toUpperCase()}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
       </View>
 
-      {/* Sort Buttons (for threats/all tabs) */}
-      {activeTab !== 'history' && (
-        <View style={dynamicStyles.section}>
-          <View style={dynamicStyles.sortRow}>
-            {([
-              { key: 'threat', label: t('security.byThreat') },
-              { key: 'cpu', label: t('security.byCpu') },
-              { key: 'ram', label: t('security.byRam') },
-            ] as const).map(s => (
-              <TouchableOpacity
-                key={s.key}
-                style={[dynamicStyles.sortBtn, sortBy === s.key && { backgroundColor: colors.primary + '20' }]}
-                onPress={() => setSortBy(s.key)}
-              >
-                <Text style={[dynamicStyles.sortText, sortBy === s.key && { color: colors.primary }]}>{s.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Apps List */}
-      {activeTab !== 'history' ? (
-        <View style={dynamicStyles.section}>
-          {sortedApps.length === 0 ? (
-            <GlassCard style={{ alignItems: 'center', paddingVertical: 30 }}>
-              <Ionicons name="shield-checkmark" size={48} color={colors.success} />
-              <Text style={[dynamicStyles.emptyText, { color: colors.textSecondary }]}>
-                {t('security.allThreatsEliminated')}
-              </Text>
-            </GlassCard>
-          ) : (
-            sortedApps.map(app => (
-              <GlassCard key={app._id} style={dynamicStyles.appCard}>
-                <View style={dynamicStyles.appRow}>
-                  <View style={[dynamicStyles.appIcon, { backgroundColor: getDangerColor(app.dangerLevel) + '20' }]}>
-                    <Ionicons name={getDangerIcon(app.dangerLevel)} size={20} color={getDangerColor(app.dangerLevel)} />
+      {/* App List - Redesigned */}
+      <View style={ds.section}>
+        {activeTab !== 'history' ? (
+          sortedApps.map(app => (
+            <GlassCard key={app._id} style={ds.appCard}>
+              <View style={ds.appRow}>
+                <View style={[ds.appIcon, { backgroundColor: getDangerColor(app.dangerLevel) + '20' }]}>
+                  <Ionicons name={getDangerIcon(app.dangerLevel)} size={20} color={getDangerColor(app.dangerLevel)} />
+                </View>
+                <View style={ds.appInfo}>
+                  <Text style={ds.appName}>{app.appName}</Text>
+                  <Text style={ds.appPackage}>{app.packageName}</Text>
+                  <View style={ds.appStats}>
+                    <Text style={{ color: AuraTheme.dark.primary, fontSize: 10, fontWeight: '700' }}>{app.cpuUsage}% CPU</Text>
+                    <Text style={{ color: AuraTheme.dark.secondary, fontSize: 10, fontWeight: '700' }}>{app.memoryUsage}MB RAM</Text>
                   </View>
-                  <View style={dynamicStyles.appInfo}>
-                    <Text style={[dynamicStyles.appName, { color: colors.textPrimary }]}>{app.appName}</Text>
-                    <Text style={[dynamicStyles.appPackage, { color: colors.textMuted }]}>{app.packageName}</Text>
-                    <View style={dynamicStyles.appStats}>
-                      <Text style={[dynamicStyles.appStat, { color: colors.primary }]}>CPU: {app.cpuUsage}%</Text>
-                      <Text style={[dynamicStyles.appStat, { color: colors.secondary }]}>RAM: {app.memoryUsage}MB</Text>
-                      <Text style={[dynamicStyles.appStat, { color: colors.warning }]}>🔋{app.batteryDrain}%</Text>
-                    </View>
-                  </View>
-                  {app.isRunning && (
-                    <TouchableOpacity
-                      style={[dynamicStyles.killBtn, { borderColor: getDangerColor(app.dangerLevel) }]}
-                      onPress={() => killSingleApp(app)}
-                    >
-                      <Ionicons name="close" size={16} color={getDangerColor(app.dangerLevel)} />
-                    </TouchableOpacity>
-                  )}
                 </View>
-              </GlassCard>
-            ))
-          )}
-        </View>
-      ) : (
-        /* History Tab */
-        <View style={dynamicStyles.section}>
-          {scanHistory.length === 0 ? (
-            <GlassCard style={{ alignItems: 'center', paddingVertical: 30 }}>
-              <Ionicons name="time" size={48} color={colors.textMuted} />
-              <Text style={[dynamicStyles.emptyText, { color: colors.textMuted }]}>No scan history yet</Text>
+                {app.isRunning && (
+                  <TouchableOpacity
+                    style={[ds.killBtn, { borderColor: getDangerColor(app.dangerLevel) }]}
+                    onPress={() => killSingleApp(app)}
+                  >
+                    <Ionicons name="power" size={14} color={getDangerColor(app.dangerLevel)} />
+                  </TouchableOpacity>
+                )}
+              </View>
             </GlassCard>
-          ) : (
-            scanHistory.map((scan, i) => (
-              <GlassCard key={i} style={dynamicStyles.historyCard}>
-                <View style={dynamicStyles.historyHeader}>
-                  <Ionicons name="shield-checkmark" size={18} color={colors.success} />
-                  <Text style={[dynamicStyles.historyDate, { color: colors.textPrimary }]}>
-                    {new Date(scan.timestamp || scan.createdAt).toLocaleDateString()}
-                  </Text>
-                </View>
-                <View style={dynamicStyles.historyStats}>
-                  <Text style={[dynamicStyles.historyStat, { color: colors.textSecondary }]}>
-                    🗑️ {scan.appsKilled?.length || 0} killed
-                  </Text>
-                  <Text style={[dynamicStyles.historyStat, { color: colors.textSecondary }]}>
-                    💾 {scan.totalMemoryFreed || 0} MB freed
-                  </Text>
-                  <Text style={[dynamicStyles.historyStat, { color: colors.textSecondary }]}>
-                    ⚡ {scan.totalCpuFreed || 0}% CPU freed
-                  </Text>
-                </View>
-              </GlassCard>
-            ))
-          )}
-        </View>
-      )}
+          ))
+        ) : (
+          scanHistory.map((scan, i) => (
+            <GlassCard key={i} style={ds.historyCard}>
+              <View style={ds.historyHeader}>
+                <Ionicons name="shield-checkmark" size={16} color={AuraTheme.dark.success} />
+                <Text style={ds.historyDate}>{new Date(scan.timestamp || scan.createdAt).toLocaleDateString()}</Text>
+              </View>
+              <Text style={ds.historyDetail}>Freed {scan.totalMemoryFreed}MB by closing {scan.appsKilled?.length} processes</Text>
+            </GlassCard>
+          ))
+        )}
+      </View>
 
       <View style={{ height: 100 }} />
     </ScrollView>
@@ -491,53 +385,39 @@ export default function SecurityScreen() {
 }
 
 const createStyles = (colors: any) => StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  header: { paddingHorizontal: Spacing.lg, paddingTop: Platform.OS === 'ios' ? 60 : 50, paddingBottom: Spacing.lg },
-  title: { color: colors.textPrimary, fontSize: FontSize.title, fontWeight: '800' },
-  subtitle: { color: colors.textSecondary, fontSize: FontSize.md, marginTop: 4 },
-  section: { paddingHorizontal: Spacing.lg, marginTop: Spacing.md },
-  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.sm },
-  scoreCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.lg },
-  scoreCircle: { width: 80, height: 80, borderRadius: 40, borderWidth: 3, alignItems: 'center', justifyContent: 'center' },
-  scoreText: { fontSize: FontSize.title, fontWeight: '900' },
-  scoreLabel: { fontSize: FontSize.xs },
+  container: { flex: 1, backgroundColor: '#070A1A' },
+  header: { paddingHorizontal: 20, paddingTop: 60, paddingBottom: 20 },
+  title: { color: '#fff', fontSize: 28, fontWeight: '800' },
+  subtitle: { color: 'rgba(255,255,255,0.5)', fontSize: 14, marginTop: 4 },
+  section: { paddingHorizontal: 20, marginTop: 20 },
+  sectionTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 12, opacity: 0.8 },
+  scoreCard: { flexDirection: 'row', alignItems: 'center', gap: 24, padding: 20 },
+  scoreCircle: { width: 90, height: 90, borderRadius: 45, borderWidth: 3, alignItems: 'center', justifyContent: 'center' },
+  scoreText: { fontSize: 32, fontWeight: '900' },
+  scoreLabel: { fontSize: 8, fontWeight: '800' },
   scoreInfo: { flex: 1 },
-  scoreTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: 6 },
-  statsRow: { flexDirection: 'row', gap: Spacing.lg },
-  statItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  statValue: { fontSize: FontSize.md, fontWeight: '700' },
-  quickStats: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  quickStatCard: { width: (width - Spacing.lg * 2 - Spacing.sm) / 2 - 1, alignItems: 'center', paddingVertical: Spacing.md },
-  quickStatValue: { fontSize: FontSize.xl, fontWeight: '800', marginTop: 4 },
-  quickStatLabel: { fontSize: FontSize.xs, marginTop: 2 },
-  scanButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, paddingVertical: Spacing.md + 4, borderRadius: BorderRadius.lg },
-  scanButtonText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700' },
-  killFeed: { maxHeight: 200, padding: Spacing.md },
-  killFeedItem: { paddingVertical: 4 },
-  killFeedText: { fontSize: FontSize.sm, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
-  resultsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  resultCard: { width: (width - Spacing.lg * 2 - Spacing.sm) / 2 - 1, alignItems: 'center', paddingVertical: Spacing.md },
-  resultValue: { fontSize: FontSize.xxl, fontWeight: '800', marginTop: 4 },
-  resultLabel: { fontSize: FontSize.xs, marginTop: 2 },
-  tabRow: { flexDirection: 'row', gap: Spacing.sm },
-  tab: { flex: 1, paddingVertical: Spacing.sm, borderRadius: BorderRadius.md, borderWidth: 1, borderColor: colors.glassBorder, alignItems: 'center' },
-  tabText: { color: colors.textMuted, fontSize: FontSize.sm, fontWeight: '600' },
-  sortRow: { flexDirection: 'row', gap: Spacing.sm },
-  sortBtn: { paddingHorizontal: Spacing.md, paddingVertical: 6, borderRadius: BorderRadius.full, borderWidth: 1, borderColor: colors.glassBorder },
-  sortText: { color: colors.textMuted, fontSize: FontSize.xs, fontWeight: '600' },
-  appCard: { marginBottom: Spacing.sm },
-  appRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-  appIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  scoreTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 6 },
+  statsRow: { flexDirection: 'row', gap: 15 },
+  statItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statValue: { fontSize: 14, fontWeight: '700' },
+  scanButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 18, borderRadius: 15 },
+  scanButtonText: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
+  killFeed: { maxHeight: 150, padding: 15 },
+  killFeedItem: { paddingVertical: 3 },
+  killFeedText: { fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  tabRow: { flexDirection: 'row', gap: 10 },
+  tab: { flex: 1, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', alignItems: 'center' },
+  tabText: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '800' },
+  appCard: { marginBottom: 10, padding: 15 },
+  appRow: { flexDirection: 'row', alignItems: 'center', gap: 15 },
+  appIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   appInfo: { flex: 1 },
-  appName: { fontSize: FontSize.md, fontWeight: '700' },
-  appPackage: { fontSize: FontSize.xs, marginTop: 1 },
-  appStats: { flexDirection: 'row', gap: Spacing.md, marginTop: 4 },
-  appStat: { fontSize: FontSize.xs, fontWeight: '600' },
-  killBtn: { width: 32, height: 32, borderRadius: 16, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
-  emptyText: { fontSize: FontSize.md, marginTop: Spacing.sm, textAlign: 'center' },
-  historyCard: { marginBottom: Spacing.sm },
-  historyHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-  historyDate: { fontSize: FontSize.md, fontWeight: '600' },
-  historyStats: { flexDirection: 'row', gap: Spacing.lg, marginTop: Spacing.sm },
-  historyStat: { fontSize: FontSize.sm },
+  appName: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  appPackage: { color: 'rgba(255,255,255,0.4)', fontSize: 10, marginTop: 2 },
+  appStats: { flexDirection: 'row', gap: 12, marginTop: 6 },
+  killBtn: { width: 34, height: 34, borderRadius: 17, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  historyCard: { marginBottom: 10, padding: 15 },
+  historyHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  historyDate: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  historyDetail: { color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 6 },
 });

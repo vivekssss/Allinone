@@ -1,6 +1,7 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from '@/constants/ThemeContext';
+import { MusicProvider } from '@/context/MusicContext';
 
 function RootLayoutInner() {
   const { colors, isDark } = useTheme();
@@ -38,7 +39,9 @@ function RootLayoutInner() {
 export default function RootLayout() {
   return (
     <ThemeProvider>
-      <RootLayoutInner />
+      <MusicProvider>
+        <RootLayoutInner />
+      </MusicProvider>
     </ThemeProvider>
   );
 }
